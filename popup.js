@@ -42,8 +42,7 @@ function markdown() {
   return lines.join("\n");
 }
 
-document.getElementById("export").addEventListener("click", () => {
-  const blobUrl = URL.createObjectURL(new Blob([markdown()], { type: "text/markdown;charset=utf-8" }));
+function exportFilename() {
   const now = new Date();
   const timestamp = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
     .map((part) => String(part).padStart(2, "0"))
@@ -51,8 +50,22 @@ document.getElementById("export").addEventListener("click", () => {
     .map((part) => String(part).padStart(2, "0"))
     .join("");
   const siteName = new URL(currentTab.url).hostname.replace(/^www\./, "") || "web-notes";
-  chrome.downloads.download({ url: blobUrl, filename: `exports/${siteName}-${timestamp}.md`, saveAs: false });
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  return `${siteName}-${timestamp}.md`;
+}
+
+document.getElementById("export").addEventListener("click", async () => {
+  try {
+    const response = await fetch("http://127.0.0.1:3517/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename: exportFilename(), content: markdown() })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    alert(`已导出到项目 exports 目录：${result.filename}`);
+  } catch (error) {
+    alert(`无法导出到项目目录。请先在项目根目录运行 npm run exporter。\n\n${error.message}`);
+  }
 });
 
 document.getElementById("clear").addEventListener("click", async () => {
