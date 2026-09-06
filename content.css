@@ -23,8 +23,8 @@
   font-weight: 600;
 }
 .web-notes-level:hover, .web-notes-media-button:hover, .web-notes-weight:hover { filter: brightness(.94); }
-.web-notes-important-group { position: relative; }
-.web-notes-color-menu {
+.web-notes-important-group, .web-notes-heading-group { position: relative; }
+.web-notes-color-menu, .web-notes-heading-menu {
   position: absolute;
   bottom: 100%;
   left: 0;
@@ -37,8 +37,12 @@
   box-shadow: 0 7px 20px rgba(26, 38, 63, .18);
 }
 .web-notes-important-group:hover .web-notes-color-menu { display: flex; }
+.web-notes-heading-group:hover .web-notes-heading-menu { display: flex; }
 .web-notes-color-choice { width: 21px; height: 21px; min-width: 21px; padding: 0; border: 1px solid rgba(23, 32, 51, .2); border-radius: 50%; }
 .web-notes-color-choice:hover { transform: scale(1.12); }
+.web-notes-heading-trigger { color: #312e81; background: #e0e7ff; }
+.web-notes-heading-choice { border: 0; border-radius: 6px; padding: 5px 7px; color: #312e81; background: #eef2ff; cursor: pointer; font: 700 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.web-notes-heading-choice:hover { background: #c7d2fe; }
 .web-notes-divider { width: 1px; height: 22px; margin: 0 1px; background: #dbe2ee; }
 .web-notes-weight { color: #475569; background: #f1f5f9; }
 .web-notes-weight-active { color: #172033; background: #cbd5e1; }
@@ -51,6 +55,7 @@
 .web-notes-note-cancel { color: #475569; background: #e2e8f0; }
 .web-notes-note-confirm { color: #fff; background: #2563eb; }
 .web-notes-highlight { border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
+.web-notes-heading-highlight { color: inherit; border-bottom: 2px solid #7c3aed; }
 .web-notes-media-selected { outline: 3px solid #60a5fa !important; outline-offset: 3px !important; }
 #web-notes-media-badges { position: fixed; z-index: 2147483646; pointer-events: none; }
 .web-notes-media-badge { position: fixed; padding: 5px 8px; color: #fff; background: #2563eb; border: 1px solid rgba(255, 255, 255, .75); border-radius: 999px; box-shadow: 0 3px 10px rgba(30, 64, 175, .35); font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }

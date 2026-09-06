@@ -1,5 +1,5 @@
 const STORAGE_PREFIX = "web-highlighter-notes:";
-const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问", note: "笔记" };
+const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问", note: "笔记", heading: "标题" };
 let currentTab;
 let currentKey;
 let pageAnnotations = [];
@@ -76,7 +76,7 @@ function render() {
   document.getElementById("notes").innerHTML = pageAnnotations.map((annotation, index) => {
     const date = new Date(annotation.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
     const source = annotation.type === "media" ? `<a class="media" href="${escapeHtml(annotation.source)}" target="_blank">${escapeHtml(annotation.label || annotation.mediaType)}</a>` : escapeHtml(annotation.quote);
-    const tag = annotation.type === "media" ? "媒体" : `${LEVEL_LABELS[annotation.level] || "标记"}${annotation.weight === "bold" ? " · 加粗" : ""}`;
+    const tag = annotation.type === "media" ? "媒体" : annotation.type === "heading" ? `H${annotation.headingLevel}` : `${LEVEL_LABELS[annotation.level] || "标记"}${annotation.weight === "bold" ? " · 加粗" : ""}`;
     return `<article class="entry"><div class="meta"><span class="tag" style="background:${annotation.color || "#e2e8f0"}">${tag}</span><time>${date}</time></div><div class="quote">${source}</div><textarea class="note" data-index="${index}" placeholder="添加自己的笔记…">${escapeHtml(annotation.note || "")}</textarea></article>`;
   }).join("");
   document.querySelectorAll("textarea.note").forEach((input) => input.addEventListener("change", async () => { pageAnnotations[Number(input.dataset.index)].note = input.value.trim(); await save(); }));
@@ -84,9 +84,16 @@ function render() {
 
 function markdown() {
   const title = currentTab.title || "未命名网页";
-  const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${currentTab.url}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, "", "## 标记与笔记", ""];
+  const orderedAnnotations = annotationsInPageOrder();
+  const hasHeadings = orderedAnnotations.some((annotation) => annotation.type === "heading");
+  const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${currentTab.url}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, ""];
+  if (!hasHeadings) lines.push("## 标记与笔记", "");
   if (!pageAnnotations.length) lines.push("暂无记录。");
-  annotationsInPageOrder().forEach((annotation) => {
+  orderedAnnotations.forEach((annotation) => {
+    if (annotation.type === "heading") {
+      lines.push(`${"#".repeat(Math.max(1, Math.min(6, annotation.headingLevel || 1)))} ${escapeMarkdown(annotation.quote)}`, "");
+      return;
+    }
     lines.push(`- ${annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation)}`);
     const note = annotationNoteMarkdown(annotation);
     if (note) lines.push(note);

@@ -9,6 +9,7 @@ const IMPORTANT_COLORS = [
   { label: "绿色", color: "#bbf7d0" },
   { label: "橙色", color: "#fed7aa" }
 ];
+const HEADING_LEVELS = [1, 2, 3, 4, 5, 6];
 let selectedMedia = null;
 let activeAnnotationId = null;
 let activeWeight = "normal";
@@ -80,11 +81,7 @@ function applyHighlight(range, annotation) {
     const mark = document.createElement("mark");
     mark.className = "web-notes-highlight";
     mark.dataset.webNotesId = annotation.id;
-    mark.style.backgroundColor = annotation.color;
-    mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
-    mark.style.textDecorationLine = "underline";
-    mark.style.textDecorationThickness = annotation.weight === "bold" ? "3px" : "1px";
-    mark.style.textUnderlineOffset = "2px";
+    applyMarkStyle(mark, annotation);
     piece.surroundContents(mark);
   }
 }
@@ -122,14 +119,40 @@ function currentSelectionRange() {
   return selection?.rangeCount && !selection.isCollapsed ? selection.getRangeAt(0).cloneRange() : null;
 }
 
+function applyMarkStyle(mark, annotation) {
+  const isHeading = annotation.type === "heading";
+  mark.classList.toggle("web-notes-heading-highlight", isHeading);
+  if (isHeading) {
+    const headingLevel = Math.max(1, Math.min(6, annotation.headingLevel || 1));
+    mark.dataset.webNotesHeading = headingLevel;
+    mark.style.backgroundColor = "transparent";
+    mark.style.fontWeight = "700";
+    mark.style.textDecorationLine = "none";
+    mark.style.fontSize = `${Math.max(1.05, 2 - headingLevel * 0.12)}em`;
+    return;
+  }
+  delete mark.dataset.webNotesHeading;
+  mark.style.backgroundColor = annotation.color;
+  mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
+  mark.style.textDecorationLine = "underline";
+  mark.style.textDecorationThickness = annotation.weight === "bold" ? "3px" : "1px";
+  mark.style.textUnderlineOffset = "2px";
+  mark.style.fontSize = "inherit";
+}
+
 function applyAnnotationStyle(annotation) {
-  document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`).forEach((mark) => {
-    mark.style.backgroundColor = annotation.color;
-    mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
-    mark.style.textDecorationLine = "underline";
-    mark.style.textDecorationThickness = annotation.weight === "bold" ? "3px" : "1px";
-    mark.style.textUnderlineOffset = "2px";
-  });
+  document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`).forEach((mark) => applyMarkStyle(mark, annotation));
+}
+
+function annotationBadgeTypes(annotation) {
+  if (annotation.badgeTypes?.length) return [...new Set(annotation.badgeTypes)];
+  if (annotation.type === "heading") return [`h${annotation.headingLevel}`];
+  if (annotation.level === "note") return [annotation.weight === "bold" ? "bold" : "normal"];
+  return [annotation.level];
+}
+
+function mergedBadgeTypes(annotation, type) {
+  return [...new Set([...annotationBadgeTypes(annotation), type])];
 }
 
 function annotationNoteLabel(annotation) {
@@ -167,24 +190,30 @@ function renderTextNoteBadges(items) {
   positionTextNoteBadges();
 }
 
-function annotationTypeBadge(annotation) {
-  if (annotation.level === "important") {
+function annotationTypeBadge(annotation, type) {
+  if (/^h[1-6]$/.test(type)) return { label: type.toUpperCase(), color: "#7c3aed" };
+  if (type === "important") {
     const colors = { "#fecaca": "#dc2626", "#bbf7d0": "#16a34a", "#fed7aa": "#ea580c" };
     return { label: "重要", color: colors[annotation.color] || "#dc2626" };
   }
-  if (annotation.level === "idea") return { label: "想法", color: "#15803d" };
-  if (annotation.level === "question") return { label: "疑问", color: "#2563eb" };
-  return { label: annotation.weight === "bold" ? "加粗" : "默认", color: "#64748b" };
+  if (type === "idea") return { label: "想法", color: "#15803d" };
+  if (type === "question") return { label: "疑问", color: "#2563eb" };
+  return { label: type === "bold" ? "加粗" : "默认", color: "#64748b" };
 }
 
 function positionTextTypeBadges() {
-  for (const { badge, mark } of textTypeBadges.values()) {
+  for (const { badges, mark } of textTypeBadges.values()) {
     const bounds = mark.getBoundingClientRect();
     const visible = bounds.width > 0 && bounds.height > 0 && bounds.bottom >= 0 && bounds.right >= 0 && bounds.top <= window.innerHeight && bounds.left <= window.innerWidth;
-    badge.hidden = !visible;
+    badges.forEach((badge) => { badge.hidden = !visible; });
     if (!visible) continue;
-    badge.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - badge.offsetWidth - 8))}px`;
-    badge.style.top = `${Math.max(8, Math.min(bounds.top - badge.offsetHeight - 6, window.innerHeight - badge.offsetHeight - 8))}px`;
+    let top = bounds.top - 6;
+    [...badges].reverse().forEach((badge) => {
+      top -= badge.offsetHeight;
+      badge.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - badge.offsetWidth - 8))}px`;
+      badge.style.top = `${Math.max(8, top)}px`;
+      top -= 4;
+    });
   }
 }
 
@@ -192,17 +221,20 @@ function renderTextTypeBadges(items) {
   const container = document.getElementById("web-notes-text-type-badges");
   container.replaceChildren();
   textTypeBadges.clear();
-  items.filter((annotation) => annotation.type === "text").forEach((annotation) => {
+  items.filter((annotation) => annotation.type === "text" || annotation.type === "heading").forEach((annotation) => {
     const marks = [...document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`)];
     const mark = marks[0];
     if (!mark) return;
-    const type = annotationTypeBadge(annotation);
-    const badge = document.createElement("span");
-    badge.className = "web-notes-text-type-badge";
-    badge.textContent = type.label;
-    badge.style.backgroundColor = type.color;
-    container.append(badge);
-    textTypeBadges.set(annotation.id, { badge, mark });
+    const badges = annotationBadgeTypes(annotation).map((type) => {
+      const badgeType = annotationTypeBadge(annotation, type);
+      const badge = document.createElement("span");
+      badge.className = "web-notes-text-type-badge";
+      badge.textContent = badgeType.label;
+      badge.style.backgroundColor = badgeType.color;
+      container.append(badge);
+      return badge;
+    });
+    textTypeBadges.set(annotation.id, { badges, mark });
   });
   positionTextTypeBadges();
 }
@@ -258,7 +290,10 @@ async function highlightSelection(level, suppliedRange, note = null) {
   const items = await annotations();
   const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
   if (existingIndex >= 0) {
-    const updated = { ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight, note: note ?? items[existingIndex].note };
+    const updated = {
+      ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight,
+      note: note ?? items[existingIndex].note, badgeTypes: mergedBadgeTypes(items[existingIndex], level.badgeType || level.id)
+    };
     items[existingIndex] = updated;
     await persist(items);
     applyAnnotationStyle(updated);
@@ -268,7 +303,8 @@ async function highlightSelection(level, suppliedRange, note = null) {
   } else {
     const annotation = {
       id: createId(), type: "text", level: level.id, color: level.color, weight: activeWeight,
-      quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note: note ?? ""
+      badgeTypes: [level.badgeType || level.id], quote: range.toString().trim(), selector: selectorFor(range),
+      createdAt: new Date().toISOString(), note: note ?? ""
     };
     applyHighlight(range, annotation);
     await save(annotation);
@@ -277,6 +313,40 @@ async function highlightSelection(level, suppliedRange, note = null) {
     showToast(`已保存「${level.label}」标记`);
   }
 
+  activeAnnotationId = null;
+  window.getSelection()?.removeAllRanges();
+  document.getElementById("web-notes-toolbar").hidden = true;
+}
+
+async function markHeading(headingLevel) {
+  const range = currentSelectionRange();
+  if (!range || !range.toString().trim()) return showToast("请先选择要标记为标题的文字");
+  const items = await annotations();
+  const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
+  if (existingIndex >= 0) {
+    const updated = {
+      ...items[existingIndex], type: "heading", headingLevel, level: "heading", color: "transparent",
+      badgeTypes: mergedBadgeTypes(items[existingIndex], `h${headingLevel}`)
+    };
+    items[existingIndex] = updated;
+    await persist(items);
+    applyAnnotationStyle(updated);
+    renderTextNoteBadges(items);
+    renderTextTypeBadges(items);
+    showToast(`已标记为 H${headingLevel}`);
+  } else {
+    const annotation = {
+      id: createId(), type: "heading", headingLevel, level: "heading", color: "transparent", weight: "normal",
+      badgeTypes: [`h${headingLevel}`], quote: range.toString().trim(), selector: selectorFor(range),
+      createdAt: new Date().toISOString(), note: ""
+    };
+    applyHighlight(range, annotation);
+    await save(annotation);
+    const savedItems = await annotations();
+    renderTextNoteBadges(savedItems);
+    renderTextTypeBadges(savedItems);
+    showToast(`已标记为 H${headingLevel}`);
+  }
   activeAnnotationId = null;
   window.getSelection()?.removeAllRanges();
   document.getElementById("web-notes-toolbar").hidden = true;
@@ -314,9 +384,10 @@ async function setWeight(weight, updateActiveAnnotation = true) {
   const items = await annotations();
   const index = items.findIndex((item) => item.id === activeAnnotationId);
   if (index < 0) return;
-  items[index] = { ...items[index], weight };
+  items[index] = { ...items[index], weight, badgeTypes: mergedBadgeTypes(items[index], weight) };
   await persist(items);
   applyAnnotationStyle(items[index]);
+  renderTextTypeBadges(items);
   showToast(weight === "bold" ? "已设为加粗" : "已恢复默认字重");
 }
 
@@ -330,7 +401,7 @@ async function recordWithWeight(weight) {
     return;
   }
   if (!range || !range.toString().trim()) return showToast("请先选择要记录的文字");
-  await highlightSelection({ id: "note", label: "笔记", color: "#e5e7eb" }, range);
+  await highlightSelection({ id: "note", label: "笔记", color: "#e5e7eb", badgeType: weight }, range);
 }
 
 function levelButton(level, className = "web-notes-level") {
@@ -372,6 +443,24 @@ function buildUi() {
   toolbar.append(importantGroup);
   toolbar.append(levelButton(LEVELS[1]));
   toolbar.append(levelButton(LEVELS[2]));
+
+  const headingGroup = document.createElement("div");
+  headingGroup.className = "web-notes-heading-group";
+  const headingButton = document.createElement("button");
+  headingButton.className = "web-notes-level web-notes-heading-trigger";
+  headingButton.textContent = "标题";
+  headingButton.addEventListener("mousedown", (event) => { event.preventDefault(); markHeading(1); });
+  const headingMenu = document.createElement("div");
+  headingMenu.className = "web-notes-heading-menu";
+  HEADING_LEVELS.forEach((headingLevel) => {
+    const button = document.createElement("button");
+    button.className = "web-notes-heading-choice";
+    button.textContent = `H${headingLevel}`;
+    button.addEventListener("mousedown", (event) => { event.preventDefault(); markHeading(headingLevel); });
+    headingMenu.append(button);
+  });
+  headingGroup.append(headingButton, headingMenu);
+  toolbar.append(headingGroup);
 
   const divider = document.createElement("span");
   divider.className = "web-notes-divider";
@@ -461,7 +550,7 @@ function buildUi() {
 async function restore() {
   const items = await annotations();
   for (const annotation of items) {
-    if (annotation.type !== "text") continue;
+    if (annotation.type !== "text" && annotation.type !== "heading") continue;
     const range = rangeFor(annotation.selector);
     if (range && range.toString().trim() === annotation.quote) applyHighlight(range, annotation);
   }
