@@ -61,13 +61,22 @@ function textMarkdown(annotation) {
   return `<span style="background-color: ${backgroundColor}; color: #ffffff; font-size: 1em; padding: 1px 4px; border-radius: 3px;">${weightedContent}</span>`;
 }
 
-function annotationNoteMarkdown(annotation) {
-  if (!annotation.note) return null;
-  if (annotation.level === "idea" || annotation.level === "question") {
-    const prefix = annotation.level === "idea" ? "我的想法" : "我的疑问";
-    return `  - <span style="background-color: #0284c7; color: #ffffff; padding: 1px 4px; border-radius: 3px;">${prefix}：${escapeMarkdown(annotation.note)}</span>`;
+function personalNotes(annotation) {
+  if (Object.hasOwn(annotation, "personalNotes")) return annotation.personalNotes || {};
+  if ((annotation.level === "idea" || annotation.level === "question") && annotation.note) {
+    return { [annotation.level]: annotation.note };
   }
-  return `  - 笔记：${escapeMarkdown(annotation.note)}`;
+  return {};
+}
+
+function annotationNoteMarkdown(annotation) {
+  const notes = personalNotes(annotation);
+  const children = [];
+  if (notes.idea) children.push(`  - <span style="background-color: #0284c7; color: #ffffff; padding: 1px 4px; border-radius: 3px;">我的想法：${escapeMarkdown(notes.idea)}</span>`);
+  if (notes.question) children.push(`  - <span style="background-color: #0284c7; color: #ffffff; padding: 1px 4px; border-radius: 3px;">我的疑问：${escapeMarkdown(notes.question)}</span>`);
+  const isLegacyPersonalNote = !Object.hasOwn(annotation, "personalNotes") && (annotation.level === "idea" || annotation.level === "question");
+  if (annotation.note && !isLegacyPersonalNote) children.push(`  - 笔记：${escapeMarkdown(annotation.note)}`);
+  return children;
 }
 
 async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
@@ -161,8 +170,7 @@ function markdown() {
       return;
     }
     lines.push(`- ${annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation)}`);
-    const note = annotationNoteMarkdown(annotation);
-    if (note) lines.push(note);
+    lines.push(...annotationNoteMarkdown(annotation));
     lines.push("");
   });
   return lines.join("\n");

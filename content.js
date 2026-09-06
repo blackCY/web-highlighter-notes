@@ -155,21 +155,36 @@ function mergedBadgeTypes(annotation, type) {
   return [...new Set([...annotationBadgeTypes(annotation), type])];
 }
 
-function annotationNoteLabel(annotation) {
-  if (!annotation.note) return null;
-  if (annotation.level === "idea") return `我的想法：${annotation.note}`;
-  if (annotation.level === "question") return `我的疑问：${annotation.note}`;
-  return `我的笔记：${annotation.note}`;
+function personalNotes(annotation) {
+  if (Object.hasOwn(annotation, "personalNotes")) return annotation.personalNotes || {};
+  if ((annotation.level === "idea" || annotation.level === "question") && annotation.note) {
+    return { [annotation.level]: annotation.note };
+  }
+  return {};
+}
+
+function annotationNoteLabels(annotation) {
+  const personal = personalNotes(annotation);
+  const labels = [];
+  if (personal.idea) labels.push(`我的想法：${personal.idea}`);
+  if (personal.question) labels.push(`我的疑问：${personal.question}`);
+  const isLegacyPersonalNote = !Object.hasOwn(annotation, "personalNotes") && (annotation.level === "idea" || annotation.level === "question");
+  if (annotation.note && !isLegacyPersonalNote) labels.push(`我的笔记：${annotation.note}`);
+  return labels;
 }
 
 function positionTextNoteBadges() {
-  for (const { badge, mark } of textNoteBadges.values()) {
+  for (const { badges, mark } of textNoteBadges.values()) {
     const bounds = mark.getBoundingClientRect();
     const visible = bounds.width > 0 && bounds.height > 0 && bounds.bottom >= 0 && bounds.right >= 0 && bounds.top <= window.innerHeight && bounds.left <= window.innerWidth;
-    badge.hidden = !visible;
+    badges.forEach((badge) => { badge.hidden = !visible; });
     if (!visible) continue;
-    badge.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - badge.offsetWidth - 8))}px`;
-    badge.style.top = `${Math.max(8, Math.min(bounds.bottom + 6, window.innerHeight - badge.offsetHeight - 8))}px`;
+    let top = bounds.bottom + 6;
+    badges.forEach((badge) => {
+      badge.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - badge.offsetWidth - 8))}px`;
+      badge.style.top = `${Math.max(8, Math.min(top, window.innerHeight - badge.offsetHeight - 8))}px`;
+      top += badge.offsetHeight + 4;
+    });
   }
 }
 
@@ -178,16 +193,19 @@ function renderTextNoteBadges(items) {
   container.replaceChildren();
   textNoteBadges.clear();
   items.filter((annotation) => annotation.type === "text").forEach((annotation) => {
-    const label = annotationNoteLabel(annotation);
-    if (!label) return;
+    const labels = annotationNoteLabels(annotation);
+    if (!labels.length) return;
     const marks = [...document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`)];
     const mark = marks.at(-1);
     if (!mark) return;
-    const badge = document.createElement("span");
-    badge.className = "web-notes-text-note-badge";
-    badge.textContent = label;
-    container.append(badge);
-    textNoteBadges.set(annotation.id, { badge, mark });
+    const badges = labels.map((label) => {
+      const badge = document.createElement("span");
+      badge.className = "web-notes-text-note-badge";
+      badge.textContent = label;
+      container.append(badge);
+      return badge;
+    });
+    textNoteBadges.set(annotation.id, { badges, mark });
   });
   positionTextNoteBadges();
 }
@@ -291,10 +309,16 @@ async function highlightSelection(level, suppliedRange, note = null) {
 
   const items = await annotations();
   const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
+  const isPersonalNote = level.id === "idea" || level.id === "question";
   if (existingIndex >= 0) {
+    const existing = items[existingIndex];
+    const notes = personalNotes(existing);
+    if (isPersonalNote && note !== null) notes[level.id] = note;
+    const isLegacyPersonalNote = !Object.hasOwn(existing, "personalNotes") && (existing.level === "idea" || existing.level === "question");
     const updated = {
-      ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight,
-      note: note ?? items[existingIndex].note, badgeTypes: mergedBadgeTypes(items[existingIndex], level.badgeType || level.id)
+      ...existing, level: level.id, color: level.color, weight: activeWeight, personalNotes: notes,
+      note: isPersonalNote && note !== null ? (isLegacyPersonalNote ? "" : existing.note) : (isLegacyPersonalNote ? "" : note ?? existing.note),
+      badgeTypes: mergedBadgeTypes(existing, level.badgeType || level.id)
     };
     items[existingIndex] = updated;
     await persist(items);
@@ -306,7 +330,8 @@ async function highlightSelection(level, suppliedRange, note = null) {
     const annotation = {
       id: createId(), type: "text", level: level.id, color: level.color, weight: activeWeight,
       badgeTypes: [level.badgeType || level.id], quote: range.toString().trim(), selector: selectorFor(range),
-      createdAt: new Date().toISOString(), note: note ?? ""
+      createdAt: new Date().toISOString(), note: isPersonalNote ? "" : note ?? "",
+      personalNotes: isPersonalNote && note ? { [level.id]: note } : {}
     };
     applyHighlight(range, annotation);
     await save(annotation);
@@ -370,7 +395,7 @@ async function openNoteEditor(level) {
   editor.querySelector("strong").textContent = level.id === "idea" ? "我的想法" : "我的疑问";
   const input = editor.querySelector("textarea");
   input.placeholder = level.id === "idea" ? "写下你的想法…" : "写下你的疑问…";
-  input.value = existing?.note || "";
+  input.value = existing ? personalNotes(existing)[level.id] || "" : "";
   editor.hidden = false;
   const toolbarBounds = document.getElementById("web-notes-toolbar").getBoundingClientRect();
   position(editor, toolbarBounds.left, toolbarBounds.top - editor.offsetHeight - 10);
