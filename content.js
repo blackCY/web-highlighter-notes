@@ -12,6 +12,8 @@ const IMPORTANT_COLORS = [
 let selectedMedia = null;
 let activeAnnotationId = null;
 let activeWeight = "normal";
+let pendingLevel = null;
+let pendingRange = null;
 let toastTimer;
 
 const pageKey = () => `${STORAGE_PREFIX}${location.href.split("#")[0]}`;
@@ -55,7 +57,7 @@ function rangeFor(selector) {
 function textNodesIn(range) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-media-toolbar, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
       return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
   });
@@ -119,14 +121,14 @@ function applyAnnotationStyle(annotation) {
   });
 }
 
-async function highlightSelection(level, suppliedRange) {
+async function highlightSelection(level, suppliedRange, note = "") {
   const range = suppliedRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
 
   const items = await annotations();
   const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
   if (existingIndex >= 0) {
-    const updated = { ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight };
+    const updated = { ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight, note };
     items[existingIndex] = updated;
     await persist(items);
     applyAnnotationStyle(updated);
@@ -134,7 +136,7 @@ async function highlightSelection(level, suppliedRange) {
   } else {
     const annotation = {
       id: createId(), type: "text", level: level.id, color: level.color, weight: activeWeight,
-      quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note: ""
+      quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note
     };
     applyHighlight(range, annotation);
     await save(annotation);
@@ -144,6 +146,29 @@ async function highlightSelection(level, suppliedRange) {
   activeAnnotationId = null;
   window.getSelection()?.removeAllRanges();
   document.getElementById("web-notes-toolbar").hidden = true;
+}
+
+function closeNoteEditor() {
+  document.getElementById("web-notes-note-editor").hidden = true;
+  pendingLevel = null;
+  pendingRange = null;
+}
+
+async function openNoteEditor(level) {
+  const range = currentSelectionRange();
+  if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
+  const existing = (await annotations()).find((item) => item.id === activeAnnotationId);
+  pendingLevel = level;
+  pendingRange = range;
+  const editor = document.getElementById("web-notes-note-editor");
+  editor.querySelector("strong").textContent = level.id === "idea" ? "我的想法" : "我的疑问";
+  const input = editor.querySelector("textarea");
+  input.placeholder = level.id === "idea" ? "写下你的想法…" : "写下你的疑问…";
+  input.value = existing?.note || "";
+  editor.hidden = false;
+  const toolbarBounds = document.getElementById("web-notes-toolbar").getBoundingClientRect();
+  position(editor, toolbarBounds.left, toolbarBounds.top - editor.offsetHeight - 10);
+  input.focus();
 }
 
 function setWeight(weight) {
@@ -158,7 +183,11 @@ function levelButton(level, className = "web-notes-level") {
   button.className = className;
   button.textContent = level.label;
   button.style.background = level.color;
-  button.addEventListener("mousedown", (event) => { event.preventDefault(); highlightSelection(level); });
+  button.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    if (level.id === "idea" || level.id === "question") openNoteEditor(level);
+    else highlightSelection(level);
+  });
   return button;
 }
 
@@ -206,6 +235,35 @@ function buildUi() {
   document.documentElement.append(toolbar);
   setWeight(activeWeight);
 
+  const noteEditor = document.createElement("div");
+  noteEditor.id = "web-notes-note-editor";
+  noteEditor.className = "web-notes-note-editor";
+  noteEditor.hidden = true;
+  const title = document.createElement("strong");
+  const input = document.createElement("textarea");
+  input.maxLength = 2000;
+  const actions = document.createElement("div");
+  actions.className = "web-notes-note-actions";
+  const cancel = document.createElement("button");
+  cancel.className = "web-notes-note-cancel";
+  cancel.textContent = "取消";
+  cancel.addEventListener("mousedown", (event) => { event.preventDefault(); closeNoteEditor(); });
+  const confirm = document.createElement("button");
+  confirm.className = "web-notes-note-confirm";
+  confirm.textContent = "保存笔记";
+  confirm.addEventListener("mousedown", async (event) => {
+    event.preventDefault();
+    if (!pendingLevel || !pendingRange) return;
+    const level = pendingLevel;
+    const range = pendingRange;
+    const note = input.value.trim();
+    closeNoteEditor();
+    await highlightSelection(level, range, note);
+  });
+  actions.append(cancel, confirm);
+  noteEditor.append(title, input, actions);
+  document.documentElement.append(noteEditor);
+
   const mediaToolbar = document.createElement("div");
   mediaToolbar.id = "web-notes-media-toolbar";
   mediaToolbar.hidden = true;
@@ -245,7 +303,9 @@ async function restore() {
 document.addEventListener("mouseup", (event) => {
   const range = currentSelectionRange();
   const toolbar = document.getElementById("web-notes-toolbar");
-  if (!range || event.target.closest?.("#web-notes-toolbar")) return (toolbar.hidden = true);
+  if (event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor")) return;
+  if (!range) return (toolbar.hidden = true);
+  closeNoteEditor();
   activeAnnotationId = null;
   toolbar.hidden = false;
   position(toolbar, event.clientX, event.clientY + 14);

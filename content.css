@@ -1,4 +1,4 @@
-#web-notes-toolbar, #web-notes-media-toolbar {
+#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar {
   position: fixed;
   z-index: 2147483647;
   display: flex;
@@ -12,7 +12,7 @@
   box-shadow: 0 8px 28px rgba(26, 38, 63, .22);
   font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
-#web-notes-toolbar[hidden], #web-notes-media-toolbar[hidden] { display: none; }
+#web-notes-toolbar[hidden], #web-notes-note-editor[hidden], #web-notes-media-toolbar[hidden] { display: none; }
 .web-notes-level, .web-notes-media-button, .web-notes-weight, .web-notes-color-choice {
   border: 0;
   border-radius: 7px;
@@ -26,7 +26,7 @@
 .web-notes-important-group { position: relative; }
 .web-notes-color-menu {
   position: absolute;
-  bottom: calc(100% + 8px);
+  bottom: 100%;
   left: 0;
   display: none;
   gap: 5px;
@@ -42,6 +42,14 @@
 .web-notes-divider { width: 1px; height: 22px; margin: 0 1px; background: #dbe2ee; }
 .web-notes-weight { color: #475569; background: #f1f5f9; }
 .web-notes-weight-active { color: #172033; background: #cbd5e1; }
+.web-notes-note-editor { display: block; width: min(320px, calc(100vw - 24px)); padding: 12px; }
+.web-notes-note-editor strong { display: block; margin-bottom: 8px; font-size: 13px; }
+.web-notes-note-editor textarea { box-sizing: border-box; display: block; width: 100%; min-height: 92px; padding: 9px 10px; color: #172033; background: #f8fafc; border: 1px solid #bfdbfe; border-radius: 8px; outline: none; resize: vertical; font: inherit; line-height: 1.45; }
+.web-notes-note-editor textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, .16); }
+.web-notes-note-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 9px; }
+.web-notes-note-actions button { border: 0; border-radius: 7px; padding: 6px 10px; cursor: pointer; font: inherit; font-weight: 600; }
+.web-notes-note-cancel { color: #475569; background: #e2e8f0; }
+.web-notes-note-confirm { color: #fff; background: #2563eb; }
 .web-notes-highlight { border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
 .web-notes-media-selected { outline: 3px solid #60a5fa !important; outline-offset: 3px !important; }
 #web-notes-toast {

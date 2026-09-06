@@ -43,9 +43,18 @@ function annotationsInPageOrder() {
 function textMarkdown(annotation) {
   const content = escapeMarkdown(annotation.quote);
   const weightedContent = annotation.weight === "bold" ? `**${content}**` : content;
-  if (annotation.level !== "important") return `> ${weightedContent}`;
+  if (annotation.level !== "important") return weightedContent;
   const color = annotation.color === "#fde68a" ? "#fecaca" : annotation.color || "#fecaca";
   return `<span style="background-color: ${color};">${weightedContent}</span>`;
+}
+
+function annotationNoteMarkdown(annotation) {
+  if (!annotation.note) return null;
+  if (annotation.level === "idea" || annotation.level === "question") {
+    const prefix = annotation.level === "idea" ? "我的想法" : "我的疑问";
+    return `  - <span style="background-color: #e0f2fe;">${prefix}：${escapeMarkdown(annotation.note)}</span>`;
+  }
+  return `  - 笔记：${escapeMarkdown(annotation.note)}`;
 }
 
 async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
@@ -68,8 +77,9 @@ function markdown() {
   annotationsInPageOrder().forEach((annotation, index) => {
     const kind = annotation.type === "media" ? `媒体（${annotation.mediaType}）` : `${LEVEL_LABELS[annotation.level] || "标记"}文字${annotation.weight === "bold" ? "（加粗）" : ""}`;
     lines.push(`### ${index + 1}. ${kind}`, "");
-    lines.push(annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation));
-    if (annotation.note) lines.push(`- 笔记：${escapeMarkdown(annotation.note)}`);
+    lines.push(`- ${annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation)}`);
+    const note = annotationNoteMarkdown(annotation);
+    if (note) lines.push(note);
     lines.push("");
   });
   return lines.join("\n");
