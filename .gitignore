@@ -1,0 +1,4 @@
+.exporter.log
+.exporter.pid
+exports/*.md
+!exports/.gitkeep
