@@ -43,9 +43,21 @@ function annotationsInPageOrder() {
 function textMarkdown(annotation) {
   const content = escapeMarkdown(annotation.quote);
   const weightedContent = annotation.weight === "bold" ? `**${content}**` : content;
-  if (annotation.level !== "important") return weightedContent;
-  const color = annotation.color === "#fde68a" ? "#fecaca" : annotation.color || "#fecaca";
-  return `<span style="background-color: ${color};">${weightedContent}</span>`;
+  const backgroundColors = {
+    idea: "#15803d",
+    question: "#2563eb"
+  };
+  const importantColors = {
+    "#fecaca": "#dc2626",
+    "#bbf7d0": "#16a34a",
+    "#fed7aa": "#ea580c",
+    "#fde68a": "#dc2626"
+  };
+  const backgroundColor = annotation.level === "important"
+    ? importantColors[annotation.color] || "#dc2626"
+    : backgroundColors[annotation.level];
+  if (!backgroundColor) return weightedContent;
+  return `<span style="background-color: ${backgroundColor}; color: #ffffff; font-size: 1em; padding: 1px 4px; border-radius: 3px;">${weightedContent}</span>`;
 }
 
 function annotationNoteMarkdown(annotation) {
@@ -74,9 +86,7 @@ function markdown() {
   const title = currentTab.title || "未命名网页";
   const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${currentTab.url}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, "", "## 标记与笔记", ""];
   if (!pageAnnotations.length) lines.push("暂无记录。");
-  annotationsInPageOrder().forEach((annotation, index) => {
-    const kind = annotation.type === "media" ? `媒体（${annotation.mediaType}）` : `${LEVEL_LABELS[annotation.level] || "标记"}文字${annotation.weight === "bold" ? "（加粗）" : ""}`;
-    lines.push(`### ${index + 1}. ${kind}`, "");
+  annotationsInPageOrder().forEach((annotation) => {
     lines.push(`- ${annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation)}`);
     const note = annotationNoteMarkdown(annotation);
     if (note) lines.push(note);
