@@ -7,6 +7,14 @@ let pageAnnotations = [];
 const escapeHtml = (text) => String(text).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 const escapeMarkdown = (text) => String(text).replace(/[\\`*_[\]<>]/g, "\\$&");
 
+function mediaMarkdown(annotation) {
+  const label = escapeMarkdown(annotation.label || "媒体内容");
+  const url = String(annotation.source || "").replace(/ /g, "%20").replace(/\)/g, "\\)");
+  if (annotation.mediaType === "img") return `![${label}](${url})`;
+  const typeLabel = annotation.mediaType === "video" ? "视频" : "音频";
+  return `[${typeLabel}：${label}](${url})`;
+}
+
 async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
 
 function render() {
@@ -27,8 +35,7 @@ function markdown() {
   pageAnnotations.forEach((annotation, index) => {
     const kind = annotation.type === "media" ? `媒体（${annotation.mediaType}）` : `${LEVEL_LABELS[annotation.level] || "标记"}文字`;
     lines.push(`### ${index + 1}. ${kind}`, "");
-    lines.push(annotation.type === "media" ? `- 媒体：${escapeMarkdown(annotation.label || "媒体内容")}` : `> ${escapeMarkdown(annotation.quote)}`);
-    if (annotation.type === "media" && annotation.source) lines.push(`- 地址：${annotation.source}`);
+    lines.push(annotation.type === "media" ? mediaMarkdown(annotation) : `> ${escapeMarkdown(annotation.quote)}`);
     if (annotation.note) lines.push(`- 笔记：${escapeMarkdown(annotation.note)}`);
     lines.push("");
   });
