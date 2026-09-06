@@ -161,6 +161,13 @@ function renderMediaBadges(items) {
   positionMediaBadges();
 }
 
+function hideMediaToolbar() {
+  selectedMedia?.classList.remove("web-notes-media-selected");
+  selectedMedia = null;
+  const toolbar = document.getElementById("web-notes-media-toolbar");
+  if (toolbar) toolbar.hidden = true;
+}
+
 async function highlightSelection(level, suppliedRange, note = null) {
   const range = suppliedRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
@@ -328,9 +335,7 @@ function buildUi() {
     };
     await save(annotation);
     await renderMediaBadges(await annotations());
-    selectedMedia.classList.remove("web-notes-media-selected");
-    selectedMedia = null;
-    mediaToolbar.hidden = true;
+    hideMediaToolbar();
     showToast("已保存媒体记录");
   });
   mediaToolbar.append(mediaButton);
@@ -359,6 +364,7 @@ document.addEventListener("mouseup", (event) => {
   const range = currentSelectionRange();
   const toolbar = document.getElementById("web-notes-toolbar");
   if (event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor")) return;
+  if (!event.target.closest?.("#web-notes-media-toolbar, img, video, audio")) hideMediaToolbar();
   if (!range) return (toolbar.hidden = true);
   closeNoteEditor();
   activeAnnotationId = null;
@@ -383,8 +389,12 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (event.target.closest?.("#web-notes-media-toolbar")) return;
   const media = event.target.closest?.("img, video, audio");
-  if (!media || event.target.closest("#web-notes-media-toolbar")) return;
+  if (!media) {
+    hideMediaToolbar();
+    return;
+  }
   selectedMedia?.classList.remove("web-notes-media-selected");
   selectedMedia = media;
   media.classList.add("web-notes-media-selected");
@@ -393,8 +403,14 @@ document.addEventListener("click", async (event) => {
   position(toolbar, event.clientX + 12, event.clientY + 12);
 }, true);
 
-window.addEventListener("scroll", positionMediaBadges, true);
+window.addEventListener("scroll", () => {
+  positionMediaBadges();
+  hideMediaToolbar();
+}, true);
 window.addEventListener("resize", positionMediaBadges);
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideMediaToolbar();
+});
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "HIGHLIGHT_SELECTION") highlightSelection(message.level);
