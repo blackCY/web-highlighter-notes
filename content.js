@@ -15,6 +15,7 @@ let activeWeight = "normal";
 let pendingLevel = null;
 let pendingRange = null;
 let toastTimer;
+const mediaBadges = new Map();
 
 const pageKey = () => `${STORAGE_PREFIX}${location.href.split("#")[0]}`;
 const createId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -57,7 +58,7 @@ function rangeFor(selector) {
 function textNodesIn(range) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-media-badges, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
       return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
   });
@@ -121,6 +122,43 @@ function applyAnnotationStyle(annotation) {
     mark.style.backgroundColor = annotation.color;
     mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
   });
+}
+
+function mediaForAnnotation(annotation) {
+  const savedElement = nodeFor(annotation.documentPath);
+  if (savedElement?.matches?.("img, video, audio")) return savedElement;
+  return [...document.querySelectorAll("img, video, audio")].find((media) => {
+    const source = media.currentSrc || media.src || media.getAttribute("src") || "";
+    return source === annotation.source;
+  });
+}
+
+function positionMediaBadges() {
+  for (const { badge, media } of mediaBadges.values()) {
+    const bounds = media.getBoundingClientRect();
+    const visible = bounds.width > 0 && bounds.height > 0 && bounds.bottom >= 0 && bounds.right >= 0 && bounds.top <= window.innerHeight && bounds.left <= window.innerWidth;
+    badge.hidden = !visible;
+    if (!visible) continue;
+    badge.style.left = `${Math.max(8, bounds.left + 8)}px`;
+    badge.style.top = `${Math.max(8, bounds.top + 8)}px`;
+  }
+}
+
+function renderMediaBadges(items) {
+  const container = document.getElementById("web-notes-media-badges");
+  container.replaceChildren();
+  mediaBadges.clear();
+  items.filter((annotation) => annotation.type === "media").forEach((annotation) => {
+    const media = mediaForAnnotation(annotation);
+    if (!media) return;
+    const badge = document.createElement("span");
+    badge.className = "web-notes-media-badge";
+    badge.textContent = "已记录";
+    badge.title = "此媒体已保存为网页笔记";
+    container.append(badge);
+    mediaBadges.set(annotation.id, { badge, media });
+  });
+  positionMediaBadges();
 }
 
 async function highlightSelection(level, suppliedRange, note = null) {
@@ -289,6 +327,7 @@ function buildUi() {
       documentPath: pathFor(selectedMedia), createdAt: new Date().toISOString(), note: ""
     };
     await save(annotation);
+    await renderMediaBadges(await annotations());
     selectedMedia.classList.remove("web-notes-media-selected");
     selectedMedia = null;
     mediaToolbar.hidden = true;
@@ -297,17 +336,23 @@ function buildUi() {
   mediaToolbar.append(mediaButton);
   document.documentElement.append(mediaToolbar);
 
+  const mediaBadgesContainer = document.createElement("div");
+  mediaBadgesContainer.id = "web-notes-media-badges";
+  document.documentElement.append(mediaBadgesContainer);
+
   const toast = document.createElement("div");
   toast.id = "web-notes-toast";
   document.documentElement.append(toast);
 }
 
 async function restore() {
-  for (const annotation of await annotations()) {
+  const items = await annotations();
+  for (const annotation of items) {
     if (annotation.type !== "text") continue;
     const range = rangeFor(annotation.selector);
     if (range && range.toString().trim() === annotation.quote) applyHighlight(range, annotation);
   }
+  renderMediaBadges(items);
 }
 
 document.addEventListener("mouseup", (event) => {
@@ -347,6 +392,9 @@ document.addEventListener("click", async (event) => {
   toolbar.hidden = false;
   position(toolbar, event.clientX + 12, event.clientY + 12);
 }, true);
+
+window.addEventListener("scroll", positionMediaBadges, true);
+window.addEventListener("resize", positionMediaBadges);
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "HIGHLIGHT_SELECTION") highlightSelection(message.level);
