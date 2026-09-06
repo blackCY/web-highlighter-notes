@@ -1,5 +1,5 @@
 const STORAGE_PREFIX = "web-highlighter-notes:";
-const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问" };
+const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问", note: "笔记" };
 let currentTab;
 let currentKey;
 let pageAnnotations = [];

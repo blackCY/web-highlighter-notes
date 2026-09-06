@@ -277,6 +277,19 @@ async function setWeight(weight, updateActiveAnnotation = true) {
   showToast(weight === "bold" ? "已设为加粗" : "已恢复默认字重");
 }
 
+async function recordWithWeight(weight) {
+  const range = currentSelectionRange();
+  await setWeight(weight);
+  if (activeAnnotationId) {
+    activeAnnotationId = null;
+    window.getSelection()?.removeAllRanges();
+    document.getElementById("web-notes-toolbar").hidden = true;
+    return;
+  }
+  if (!range || !range.toString().trim()) return showToast("请先选择要记录的文字");
+  await highlightSelection({ id: "note", label: "笔记", color: "transparent" }, range);
+}
+
 function levelButton(level, className = "web-notes-level") {
   const button = document.createElement("button");
   button.className = className;
@@ -328,7 +341,7 @@ function buildUi() {
     button.className = "web-notes-weight";
     button.dataset.weight = weight.id;
     button.textContent = weight.label;
-    button.addEventListener("mousedown", (event) => { event.preventDefault(); setWeight(weight.id); });
+    button.addEventListener("mousedown", (event) => { event.preventDefault(); recordWithWeight(weight.id); });
     toolbar.append(button);
   });
   document.documentElement.append(toolbar);
