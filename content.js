@@ -16,6 +16,7 @@ let pendingLevel = null;
 let pendingRange = null;
 let toastTimer;
 const mediaBadges = new Map();
+const textNoteBadges = new Map();
 
 const pageKey = () => `${STORAGE_PREFIX}${location.href.split("#")[0]}`;
 const createId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -80,6 +81,9 @@ function applyHighlight(range, annotation) {
     mark.dataset.webNotesId = annotation.id;
     mark.style.backgroundColor = annotation.color;
     mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
+    mark.style.textDecorationLine = "underline";
+    mark.style.textDecorationThickness = annotation.weight === "bold" ? "3px" : "1px";
+    mark.style.textUnderlineOffset = "2px";
     piece.surroundContents(mark);
   }
 }
@@ -121,7 +125,45 @@ function applyAnnotationStyle(annotation) {
   document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`).forEach((mark) => {
     mark.style.backgroundColor = annotation.color;
     mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
+    mark.style.textDecorationLine = "underline";
+    mark.style.textDecorationThickness = annotation.weight === "bold" ? "3px" : "1px";
+    mark.style.textUnderlineOffset = "2px";
   });
+}
+
+function annotationNoteLabel(annotation) {
+  if (!annotation.note || (annotation.level !== "idea" && annotation.level !== "question")) return null;
+  return `${annotation.level === "idea" ? "我的想法" : "我的疑问"}：${annotation.note}`;
+}
+
+function positionTextNoteBadges() {
+  for (const { badge, mark } of textNoteBadges.values()) {
+    const bounds = mark.getBoundingClientRect();
+    const visible = bounds.width > 0 && bounds.height > 0 && bounds.bottom >= 0 && bounds.right >= 0 && bounds.top <= window.innerHeight && bounds.left <= window.innerWidth;
+    badge.hidden = !visible;
+    if (!visible) continue;
+    badge.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - badge.offsetWidth - 8))}px`;
+    badge.style.top = `${Math.max(8, Math.min(bounds.bottom + 6, window.innerHeight - badge.offsetHeight - 8))}px`;
+  }
+}
+
+function renderTextNoteBadges(items) {
+  const container = document.getElementById("web-notes-text-note-badges");
+  container.replaceChildren();
+  textNoteBadges.clear();
+  items.filter((annotation) => annotation.type === "text").forEach((annotation) => {
+    const label = annotationNoteLabel(annotation);
+    if (!label) return;
+    const marks = [...document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`)];
+    const mark = marks.at(-1);
+    if (!mark) return;
+    const badge = document.createElement("span");
+    badge.className = "web-notes-text-note-badge";
+    badge.textContent = label;
+    container.append(badge);
+    textNoteBadges.set(annotation.id, { badge, mark });
+  });
+  positionTextNoteBadges();
 }
 
 function mediaForAnnotation(annotation) {
@@ -179,6 +221,7 @@ async function highlightSelection(level, suppliedRange, note = null) {
     items[existingIndex] = updated;
     await persist(items);
     applyAnnotationStyle(updated);
+    renderTextNoteBadges(items);
     showToast(`已更新为「${level.label}」标记`);
   } else {
     const annotation = {
@@ -187,6 +230,7 @@ async function highlightSelection(level, suppliedRange, note = null) {
     };
     applyHighlight(range, annotation);
     await save(annotation);
+    renderTextNoteBadges(await annotations());
     showToast(`已保存「${level.label}」标记`);
   }
 
@@ -345,6 +389,10 @@ function buildUi() {
   mediaBadgesContainer.id = "web-notes-media-badges";
   document.documentElement.append(mediaBadgesContainer);
 
+  const textNoteBadgesContainer = document.createElement("div");
+  textNoteBadgesContainer.id = "web-notes-text-note-badges";
+  document.documentElement.append(textNoteBadgesContainer);
+
   const toast = document.createElement("div");
   toast.id = "web-notes-toast";
   document.documentElement.append(toast);
@@ -357,6 +405,7 @@ async function restore() {
     const range = rangeFor(annotation.selector);
     if (range && range.toString().trim() === annotation.quote) applyHighlight(range, annotation);
   }
+  renderTextNoteBadges(items);
   renderMediaBadges(items);
 }
 
@@ -405,9 +454,13 @@ document.addEventListener("click", async (event) => {
 
 window.addEventListener("scroll", () => {
   positionMediaBadges();
+  positionTextNoteBadges();
   hideMediaToolbar();
 }, true);
-window.addEventListener("resize", positionMediaBadges);
+window.addEventListener("resize", () => {
+  positionMediaBadges();
+  positionTextNoteBadges();
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideMediaToolbar();
 });
