@@ -2,7 +2,8 @@
 <html lang="zh-CN">
   <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"></head>
   <body>
-    <header><h1>网页笔记</h1><p id="page-title">正在读取当前页面…</p></header>
+    <header><div class="header-row"><h1>网页笔记</h1><button id="directory-toggle" class="header-action">保存目录</button></div><p id="page-title">正在读取当前页面…</p></header>
+    <section id="export-settings" hidden><label for="export-directory">Markdown 保存目录</label><input id="export-directory" type="text" placeholder="/Users/你的用户名/Documents/notes"><p id="directory-status"></p><div><button id="choose-directory" class="secondary">选择文件夹</button><button id="save-directory">保存目录</button></div></section>
     <main><div id="empty">这个页面还没有记录。</div><div id="notes"></div></main>
     <footer><button id="export">导出 Markdown</button><button id="clear" class="secondary">清除此页记录</button></footer>
     <script src="popup.js"></script>

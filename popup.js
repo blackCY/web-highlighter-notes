@@ -3,6 +3,7 @@ const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问", 
 let currentTab;
 let currentKey;
 let pageAnnotations = [];
+const exporterUrl = "http://127.0.0.1:3517";
 
 const escapeHtml = (text) => String(text).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 const escapeMarkdown = (text) => String(text).replace(/[\\`*_[\]<>]/g, "\\$&");
@@ -71,6 +72,29 @@ function annotationNoteMarkdown(annotation) {
 
 async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
 
+async function exporterRequest(path, options = {}) {
+  const response = await fetch(`${exporterUrl}${path}`, options);
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "本地导出服务请求失败");
+  return result;
+}
+
+function directoryError(error) {
+  return `无法连接本地导出服务：${error.message}`;
+}
+
+async function loadExportSettings() {
+  const status = document.getElementById("directory-status");
+  status.textContent = "正在读取保存目录…";
+  try {
+    const result = await exporterRequest("/settings");
+    document.getElementById("export-directory").value = result.directory;
+    status.textContent = result.directory === result.defaultDirectory ? "当前使用项目默认 exports 目录" : "当前使用自定义目录";
+  } catch (error) {
+    status.textContent = directoryError(error);
+  }
+}
+
 function render() {
   document.getElementById("empty").hidden = pageAnnotations.length > 0;
   document.getElementById("notes").innerHTML = pageAnnotations.map((annotation, index) => {
@@ -115,16 +139,47 @@ function exportFilename() {
 
 document.getElementById("export").addEventListener("click", async () => {
   try {
-    const response = await fetch("http://127.0.0.1:3517/export", {
+    const result = await exporterRequest("/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ filename: exportFilename(), content: markdown(), pageUrl: currentTab.url })
     });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error);
-    alert(`${result.action === "updated" ? "已更新" : "已新增"}项目 exports 目录中的笔记：${result.filename}`);
+    alert(`${result.action === "updated" ? "已更新" : "已新增"}保存目录中的笔记：${result.filename}`);
   } catch (error) {
     alert(`无法导出到项目目录。请先在项目根目录运行 npm run exporter。\n\n${error.message}`);
+  }
+});
+
+document.getElementById("directory-toggle").addEventListener("click", async () => {
+  const settings = document.getElementById("export-settings");
+  settings.hidden = !settings.hidden;
+  if (!settings.hidden) await loadExportSettings();
+});
+
+document.getElementById("save-directory").addEventListener("click", async () => {
+  const status = document.getElementById("directory-status");
+  try {
+    const result = await exporterRequest("/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ directory: document.getElementById("export-directory").value })
+    });
+    document.getElementById("export-directory").value = result.directory;
+    status.textContent = "已保存自定义目录。";
+  } catch (error) {
+    status.textContent = directoryError(error);
+  }
+});
+
+document.getElementById("choose-directory").addEventListener("click", async () => {
+  const status = document.getElementById("directory-status");
+  status.textContent = "正在打开系统文件夹选择器…";
+  try {
+    const result = await exporterRequest("/choose-directory", { method: "POST" });
+    document.getElementById("export-directory").value = result.directory;
+    status.textContent = "已保存自定义目录。";
+  } catch (error) {
+    status.textContent = directoryError(error);
   }
 });
 
