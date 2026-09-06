@@ -17,6 +17,7 @@ let pendingRange = null;
 let toastTimer;
 const mediaBadges = new Map();
 const textNoteBadges = new Map();
+const textTypeBadges = new Map();
 
 const pageKey = () => `${STORAGE_PREFIX}${location.href.split("#")[0]}`;
 const createId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -59,7 +60,7 @@ function rangeFor(selector) {
 function textNodesIn(range) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-media-badges, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-media-badges, #web-notes-text-note-badges, #web-notes-text-type-badges, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
       return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
   });
@@ -166,6 +167,46 @@ function renderTextNoteBadges(items) {
   positionTextNoteBadges();
 }
 
+function annotationTypeBadge(annotation) {
+  if (annotation.level === "important") {
+    const colors = { "#fecaca": "#dc2626", "#bbf7d0": "#16a34a", "#fed7aa": "#ea580c" };
+    return { label: "重要", color: colors[annotation.color] || "#dc2626" };
+  }
+  if (annotation.level === "idea") return { label: "想法", color: "#15803d" };
+  if (annotation.level === "question") return { label: "疑问", color: "#2563eb" };
+  return { label: annotation.weight === "bold" ? "加粗" : "默认", color: "#64748b" };
+}
+
+function positionTextTypeBadges() {
+  for (const { badge, mark } of textTypeBadges.values()) {
+    const bounds = mark.getBoundingClientRect();
+    const visible = bounds.width > 0 && bounds.height > 0 && bounds.bottom >= 0 && bounds.right >= 0 && bounds.top <= window.innerHeight && bounds.left <= window.innerWidth;
+    badge.hidden = !visible;
+    if (!visible) continue;
+    badge.style.left = `${Math.max(8, Math.min(bounds.left, window.innerWidth - badge.offsetWidth - 8))}px`;
+    badge.style.top = `${Math.max(8, Math.min(bounds.top - badge.offsetHeight - 6, window.innerHeight - badge.offsetHeight - 8))}px`;
+  }
+}
+
+function renderTextTypeBadges(items) {
+  const container = document.getElementById("web-notes-text-type-badges");
+  container.replaceChildren();
+  textTypeBadges.clear();
+  items.filter((annotation) => annotation.type === "text").forEach((annotation) => {
+    const marks = [...document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`)];
+    const mark = marks[0];
+    if (!mark) return;
+    const type = annotationTypeBadge(annotation);
+    const badge = document.createElement("span");
+    badge.className = "web-notes-text-type-badge";
+    badge.textContent = type.label;
+    badge.style.backgroundColor = type.color;
+    container.append(badge);
+    textTypeBadges.set(annotation.id, { badge, mark });
+  });
+  positionTextTypeBadges();
+}
+
 function mediaForAnnotation(annotation) {
   const savedElement = nodeFor(annotation.documentPath);
   if (savedElement?.matches?.("img, video, audio")) return savedElement;
@@ -222,6 +263,7 @@ async function highlightSelection(level, suppliedRange, note = null) {
     await persist(items);
     applyAnnotationStyle(updated);
     renderTextNoteBadges(items);
+    renderTextTypeBadges(items);
     showToast(`已更新为「${level.label}」标记`);
   } else {
     const annotation = {
@@ -231,6 +273,7 @@ async function highlightSelection(level, suppliedRange, note = null) {
     applyHighlight(range, annotation);
     await save(annotation);
     renderTextNoteBadges(await annotations());
+    renderTextTypeBadges(await annotations());
     showToast(`已保存「${level.label}」标记`);
   }
 
@@ -406,6 +449,10 @@ function buildUi() {
   textNoteBadgesContainer.id = "web-notes-text-note-badges";
   document.documentElement.append(textNoteBadgesContainer);
 
+  const textTypeBadgesContainer = document.createElement("div");
+  textTypeBadgesContainer.id = "web-notes-text-type-badges";
+  document.documentElement.append(textTypeBadgesContainer);
+
   const toast = document.createElement("div");
   toast.id = "web-notes-toast";
   document.documentElement.append(toast);
@@ -419,6 +466,7 @@ async function restore() {
     if (range && range.toString().trim() === annotation.quote) applyHighlight(range, annotation);
   }
   renderTextNoteBadges(items);
+  renderTextTypeBadges(items);
   renderMediaBadges(items);
 }
 
@@ -468,11 +516,13 @@ document.addEventListener("click", async (event) => {
 window.addEventListener("scroll", () => {
   positionMediaBadges();
   positionTextNoteBadges();
+  positionTextTypeBadges();
   hideMediaToolbar();
 }, true);
 window.addEventListener("resize", () => {
   positionMediaBadges();
   positionTextNoteBadges();
+  positionTextTypeBadges();
 });
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideMediaToolbar();

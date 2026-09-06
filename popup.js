@@ -64,7 +64,7 @@ function annotationNoteMarkdown(annotation) {
   if (!annotation.note) return null;
   if (annotation.level === "idea" || annotation.level === "question") {
     const prefix = annotation.level === "idea" ? "我的想法" : "我的疑问";
-    return `  - <span style="background-color: #e0f2fe;">${prefix}：${escapeMarkdown(annotation.note)}</span>`;
+    return `  - <span style="background-color: #0284c7; color: #ffffff; padding: 1px 4px; border-radius: 3px;">${prefix}：${escapeMarkdown(annotation.note)}</span>`;
   }
   return `  - 笔记：${escapeMarkdown(annotation.note)}`;
 }
