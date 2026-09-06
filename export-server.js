@@ -1,5 +1,5 @@
 const http = require("node:http");
-const { mkdir, writeFile } = require("node:fs/promises");
+const { mkdir, readdir, readFile, writeFile } = require("node:fs/promises");
 const path = require("node:path");
 
 const port = 3517;
@@ -24,18 +24,31 @@ async function requestBody(request) {
   return JSON.parse(body);
 }
 
+async function existingExportFilename(pageUrl) {
+  const sourceLine = `- 原文网址：${pageUrl}`;
+  const files = await readdir(exportsDirectory, { withFileTypes: true });
+  for (const file of files) {
+    if (!file.isFile() || !file.name.endsWith(".md")) continue;
+    const exportedContent = await readFile(path.join(exportsDirectory, file.name), "utf8");
+    if (exportedContent.includes(sourceLine)) return file.name;
+  }
+  return null;
+}
+
 const server = http.createServer(async (request, response) => {
   if (request.method === "OPTIONS") return send(response, 204, {});
   if (request.method !== "POST" || request.url !== "/export") return send(response, 404, { error: "Not found" });
 
   try {
-    const { filename, content } = await requestBody(request);
+    const { filename, content, pageUrl } = await requestBody(request);
     const safeFilename = path.basename(String(filename)).replace(/[^\w.-]/g, "-");
-    if (!safeFilename.endsWith(".md") || !content) throw new Error("无效的导出内容");
+    if (!safeFilename.endsWith(".md") || !content || !pageUrl) throw new Error("无效的导出内容");
     await mkdir(exportsDirectory, { recursive: true });
-    const outputPath = path.join(exportsDirectory, safeFilename);
+    const existingFilename = await existingExportFilename(String(pageUrl));
+    const targetFilename = existingFilename || safeFilename;
+    const outputPath = path.join(exportsDirectory, targetFilename);
     await writeFile(outputPath, String(content), "utf8");
-    send(response, 200, { filename: safeFilename, path: outputPath });
+    send(response, 200, { filename: targetFilename, path: outputPath, action: existingFilename ? "updated" : "created" });
   } catch (error) {
     send(response, 400, { error: error.message || "无法保存文件" });
   }

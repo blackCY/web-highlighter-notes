@@ -58,11 +58,11 @@ document.getElementById("export").addEventListener("click", async () => {
     const response = await fetch("http://127.0.0.1:3517/export", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: exportFilename(), content: markdown() })
+      body: JSON.stringify({ filename: exportFilename(), content: markdown(), pageUrl: currentTab.url })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error);
-    alert(`已导出到项目 exports 目录：${result.filename}`);
+    alert(`${result.action === "updated" ? "已更新" : "已新增"}项目 exports 目录中的笔记：${result.filename}`);
   } catch (error) {
     alert(`无法导出到项目目录。请先在项目根目录运行 npm run exporter。\n\n${error.message}`);
   }
