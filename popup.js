@@ -72,6 +72,24 @@ function annotationNoteMarkdown(annotation) {
 
 async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
 
+async function exportMarkdown() {
+  return exporterRequest("/export", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: exportFilename(), content: markdown(), pageUrl: currentTab.url })
+  });
+}
+
+async function refreshPageAnnotation(annotation) {
+  try {
+    await chrome.tabs.sendMessage(currentTab.id, {
+      type: "UPDATE_ANNOTATION_NOTE",
+      annotationId: annotation.id,
+      note: annotation.note
+    });
+  } catch { /* The popup can still save and export if the target page cannot receive messages. */ }
+}
+
 async function exporterRequest(path, options = {}) {
   const response = await fetch(`${exporterUrl}${path}`, options);
   const result = await response.json();
@@ -101,9 +119,33 @@ function render() {
     const date = new Date(annotation.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
     const source = annotation.type === "media" ? `<a class="media" href="${escapeHtml(annotation.source)}" target="_blank">${escapeHtml(annotation.label || annotation.mediaType)}</a>` : escapeHtml(annotation.quote);
     const tag = annotation.type === "media" ? "媒体" : annotation.type === "heading" ? `H${annotation.headingLevel}` : `${LEVEL_LABELS[annotation.level] || "标记"}${annotation.weight === "bold" ? " · 加粗" : ""}`;
-    return `<article class="entry"><div class="meta"><span class="tag" style="background:${annotation.color || "#e2e8f0"}">${tag}</span><time>${date}</time></div><div class="quote">${source}</div><textarea class="note" data-index="${index}" placeholder="添加自己的笔记…">${escapeHtml(annotation.note || "")}</textarea></article>`;
+    const actionLabel = annotation.note ? "更新笔记" : "添加笔记";
+    return `<article class="entry"><div class="meta"><span class="tag" style="background:${annotation.color || "#e2e8f0"}">${tag}</span><time>${date}</time></div><div class="quote">${source}</div><textarea class="note" data-index="${index}" placeholder="添加自己的笔记…">${escapeHtml(annotation.note || "")}</textarea><div class="note-actions"><span class="note-status" data-status-index="${index}"></span><button class="note-save" data-index="${index}">${actionLabel}</button></div></article>`;
   }).join("");
-  document.querySelectorAll("textarea.note").forEach((input) => input.addEventListener("change", async () => { pageAnnotations[Number(input.dataset.index)].note = input.value.trim(); await save(); }));
+  document.querySelectorAll("textarea.note").forEach((input) => input.addEventListener("input", () => {
+    const button = document.querySelector(`.note-save[data-index="${input.dataset.index}"]`);
+    button.textContent = input.value.trim() ? "更新笔记" : "添加笔记";
+  }));
+  document.querySelectorAll("button.note-save").forEach((button) => button.addEventListener("click", async () => {
+    const index = Number(button.dataset.index);
+    const input = document.querySelector(`textarea.note[data-index="${index}"]`);
+    const status = document.querySelector(`.note-status[data-status-index="${index}"]`);
+    const annotation = pageAnnotations[index];
+    button.disabled = true;
+    status.textContent = "正在保存…";
+    annotation.note = input.value.trim();
+    try {
+      await save();
+      await refreshPageAnnotation(annotation);
+      const result = await exportMarkdown();
+      button.textContent = annotation.note ? "更新笔记" : "添加笔记";
+      status.textContent = `${result.action === "updated" ? "已更新" : "已导出"} Markdown`;
+    } catch (error) {
+      status.textContent = `笔记已保存，Markdown 未同步：${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  }));
 }
 
 function markdown() {
@@ -139,11 +181,7 @@ function exportFilename() {
 
 document.getElementById("export").addEventListener("click", async () => {
   try {
-    const result = await exporterRequest("/export", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: exportFilename(), content: markdown(), pageUrl: currentTab.url })
-    });
+    const result = await exportMarkdown();
     alert(`${result.action === "updated" ? "已更新" : "已新增"}保存目录中的笔记：${result.filename}`);
   } catch (error) {
     alert(`无法导出到项目目录。请先在项目根目录运行 npm run exporter。\n\n${error.message}`);

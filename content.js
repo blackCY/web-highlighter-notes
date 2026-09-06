@@ -156,8 +156,10 @@ function mergedBadgeTypes(annotation, type) {
 }
 
 function annotationNoteLabel(annotation) {
-  if (!annotation.note || (annotation.level !== "idea" && annotation.level !== "question")) return null;
-  return `${annotation.level === "idea" ? "我的想法" : "我的疑问"}：${annotation.note}`;
+  if (!annotation.note) return null;
+  if (annotation.level === "idea") return `我的想法：${annotation.note}`;
+  if (annotation.level === "question") return `我的疑问：${annotation.note}`;
+  return `我的笔记：${annotation.note}`;
 }
 
 function positionTextNoteBadges() {
@@ -618,6 +620,17 @@ window.addEventListener("keydown", (event) => {
 });
 
 chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "UPDATE_ANNOTATION_NOTE") {
+    (async () => {
+      const items = await annotations();
+      const index = items.findIndex((item) => item.id === message.annotationId);
+      if (index < 0) return;
+      items[index] = { ...items[index], note: String(message.note || "") };
+      await persist(items);
+      renderTextNoteBadges(items);
+    })();
+    return;
+  }
   if (message.type === "HIGHLIGHT_SELECTION") highlightSelection(message.level);
 });
 
