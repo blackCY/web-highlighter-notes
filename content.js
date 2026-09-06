@@ -287,7 +287,7 @@ async function recordWithWeight(weight) {
     return;
   }
   if (!range || !range.toString().trim()) return showToast("请先选择要记录的文字");
-  await highlightSelection({ id: "note", label: "笔记", color: "transparent" }, range);
+  await highlightSelection({ id: "note", label: "笔记", color: "#e5e7eb" }, range);
 }
 
 function levelButton(level, className = "web-notes-level") {
