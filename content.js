@@ -574,6 +574,7 @@ document.addEventListener("mouseup", (event) => {
 });
 
 document.addEventListener("click", async (event) => {
+  if (!event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor")) closeNoteEditor();
   const mark = event.target.closest?.("mark.web-notes-highlight");
   if (mark) {
     const range = document.createRange();
