@@ -78,6 +78,7 @@ function applyHighlight(range, annotation) {
     mark.className = "web-notes-highlight";
     mark.dataset.webNotesId = annotation.id;
     mark.style.backgroundColor = annotation.color;
+    mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
     piece.surroundContents(mark);
   }
 }
@@ -118,17 +119,18 @@ function currentSelectionRange() {
 function applyAnnotationStyle(annotation) {
   document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`).forEach((mark) => {
     mark.style.backgroundColor = annotation.color;
+    mark.style.fontWeight = annotation.weight === "bold" ? "700" : "inherit";
   });
 }
 
-async function highlightSelection(level, suppliedRange, note = "") {
+async function highlightSelection(level, suppliedRange, note = null) {
   const range = suppliedRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
 
   const items = await annotations();
   const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
   if (existingIndex >= 0) {
-    const updated = { ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight, note };
+    const updated = { ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight, note: note ?? items[existingIndex].note };
     items[existingIndex] = updated;
     await persist(items);
     applyAnnotationStyle(updated);
@@ -136,7 +138,7 @@ async function highlightSelection(level, suppliedRange, note = "") {
   } else {
     const annotation = {
       id: createId(), type: "text", level: level.id, color: level.color, weight: activeWeight,
-      quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note
+      quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note: note ?? ""
     };
     applyHighlight(range, annotation);
     await save(annotation);
@@ -171,11 +173,19 @@ async function openNoteEditor(level) {
   input.focus();
 }
 
-function setWeight(weight) {
+async function setWeight(weight, updateActiveAnnotation = true) {
   activeWeight = weight;
   document.querySelectorAll(".web-notes-weight").forEach((button) => {
     button.classList.toggle("web-notes-weight-active", button.dataset.weight === weight);
   });
+  if (!updateActiveAnnotation || !activeAnnotationId) return;
+  const items = await annotations();
+  const index = items.findIndex((item) => item.id === activeAnnotationId);
+  if (index < 0) return;
+  items[index] = { ...items[index], weight };
+  await persist(items);
+  applyAnnotationStyle(items[index]);
+  showToast(weight === "bold" ? "已设为加粗" : "已恢复默认字重");
 }
 
 function levelButton(level, className = "web-notes-level") {
@@ -311,7 +321,7 @@ document.addEventListener("mouseup", (event) => {
   position(toolbar, event.clientX, event.clientY + 14);
 });
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const mark = event.target.closest?.("mark.web-notes-highlight");
   if (mark) {
     const range = document.createRange();
@@ -320,6 +330,8 @@ document.addEventListener("click", (event) => {
     selection.removeAllRanges();
     selection.addRange(range);
     activeAnnotationId = mark.dataset.webNotesId;
+    const annotation = (await annotations()).find((item) => item.id === activeAnnotationId);
+    await setWeight(annotation?.weight || "normal", false);
     const toolbar = document.getElementById("web-notes-toolbar");
     toolbar.hidden = false;
     position(toolbar, event.clientX, event.clientY + 14);
