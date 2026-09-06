@@ -44,8 +44,14 @@ function markdown() {
 
 document.getElementById("export").addEventListener("click", () => {
   const blobUrl = URL.createObjectURL(new Blob([markdown()], { type: "text/markdown;charset=utf-8" }));
-  const basename = (currentTab.title || "web-notes").replace(/[\\/:*?"<>|]/g, "-").slice(0, 60);
-  chrome.downloads.download({ url: blobUrl, filename: `${basename}-notes.md`, saveAs: true });
+  const now = new Date();
+  const timestamp = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join("") + "-" + [now.getHours(), now.getMinutes(), now.getSeconds()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join("");
+  const siteName = new URL(currentTab.url).hostname.replace(/^www\./, "") || "web-notes";
+  chrome.downloads.download({ url: blobUrl, filename: `exports/${siteName}-${timestamp}.md`, saveAs: false });
   setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 });
 
