@@ -13,7 +13,7 @@
   font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 #web-notes-toolbar[hidden], #web-notes-media-toolbar[hidden] { display: none; }
-.web-notes-level, .web-notes-media-button {
+.web-notes-level, .web-notes-media-button, .web-notes-weight, .web-notes-color-choice {
   border: 0;
   border-radius: 7px;
   padding: 7px 9px;
@@ -22,8 +22,27 @@
   font: inherit;
   font-weight: 600;
 }
-.web-notes-level:hover, .web-notes-media-button:hover { filter: brightness(.94); }
-.web-notes-highlight { border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.web-notes-level:hover, .web-notes-media-button:hover, .web-notes-weight:hover { filter: brightness(.94); }
+.web-notes-important-group { position: relative; }
+.web-notes-color-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: none;
+  gap: 5px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #dbe2ee;
+  border-radius: 8px;
+  box-shadow: 0 7px 20px rgba(26, 38, 63, .18);
+}
+.web-notes-important-group:hover .web-notes-color-menu { display: flex; }
+.web-notes-color-choice { width: 21px; height: 21px; min-width: 21px; padding: 0; border: 1px solid rgba(23, 32, 51, .2); border-radius: 50%; }
+.web-notes-color-choice:hover { transform: scale(1.12); }
+.web-notes-divider { width: 1px; height: 22px; margin: 0 1px; background: #dbe2ee; }
+.web-notes-weight { color: #475569; background: #f1f5f9; }
+.web-notes-weight-active { color: #172033; background: #cbd5e1; }
+.web-notes-highlight { border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
 .web-notes-media-selected { outline: 3px solid #60a5fa !important; outline-offset: 3px !important; }
 #web-notes-toast {
   position: fixed; z-index: 2147483647; right: 20px; bottom: 20px;

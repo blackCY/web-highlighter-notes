@@ -1,5 +1,5 @@
 const STORAGE_PREFIX = "web-highlighter-notes:";
-const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问", review: "复习" };
+const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问" };
 let currentTab;
 let currentKey;
 let pageAnnotations = [];
@@ -15,6 +15,39 @@ function mediaMarkdown(annotation) {
   return `[${typeLabel}：${label}](${url})`;
 }
 
+function annotationPosition(annotation) {
+  const path = annotation.selector?.startPath || annotation.documentPath;
+  if (!path) return null;
+  return [...path, annotation.selector?.startOffset || 0];
+}
+
+function annotationsInPageOrder() {
+  return [...pageAnnotations].sort((left, right) => {
+    const leftPosition = annotationPosition(left);
+    const rightPosition = annotationPosition(right);
+    if (leftPosition && rightPosition) {
+      const length = Math.max(leftPosition.length, rightPosition.length);
+      for (let index = 0; index < length; index += 1) {
+        const difference = (leftPosition[index] ?? -1) - (rightPosition[index] ?? -1);
+        if (difference) return difference;
+      }
+    } else if (leftPosition) {
+      return -1;
+    } else if (rightPosition) {
+      return 1;
+    }
+    return new Date(left.createdAt) - new Date(right.createdAt);
+  });
+}
+
+function textMarkdown(annotation) {
+  const content = escapeMarkdown(annotation.quote);
+  const weightedContent = annotation.weight === "bold" ? `**${content}**` : content;
+  if (annotation.level !== "important") return `> ${weightedContent}`;
+  const color = annotation.color === "#fde68a" ? "#fecaca" : annotation.color || "#fecaca";
+  return `<span style="background-color: ${color};">${weightedContent}</span>`;
+}
+
 async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
 
 function render() {
@@ -22,7 +55,7 @@ function render() {
   document.getElementById("notes").innerHTML = pageAnnotations.map((annotation, index) => {
     const date = new Date(annotation.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
     const source = annotation.type === "media" ? `<a class="media" href="${escapeHtml(annotation.source)}" target="_blank">${escapeHtml(annotation.label || annotation.mediaType)}</a>` : escapeHtml(annotation.quote);
-    const tag = annotation.type === "media" ? "媒体" : LEVEL_LABELS[annotation.level] || "标记";
+    const tag = annotation.type === "media" ? "媒体" : `${LEVEL_LABELS[annotation.level] || "标记"}${annotation.weight === "bold" ? " · 加粗" : ""}`;
     return `<article class="entry"><div class="meta"><span class="tag" style="background:${annotation.color || "#e2e8f0"}">${tag}</span><time>${date}</time></div><div class="quote">${source}</div><textarea class="note" data-index="${index}" placeholder="添加自己的笔记…">${escapeHtml(annotation.note || "")}</textarea></article>`;
   }).join("");
   document.querySelectorAll("textarea.note").forEach((input) => input.addEventListener("change", async () => { pageAnnotations[Number(input.dataset.index)].note = input.value.trim(); await save(); }));
@@ -32,10 +65,10 @@ function markdown() {
   const title = currentTab.title || "未命名网页";
   const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${currentTab.url}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, "", "## 标记与笔记", ""];
   if (!pageAnnotations.length) lines.push("暂无记录。");
-  pageAnnotations.forEach((annotation, index) => {
-    const kind = annotation.type === "media" ? `媒体（${annotation.mediaType}）` : `${LEVEL_LABELS[annotation.level] || "标记"}文字`;
+  annotationsInPageOrder().forEach((annotation, index) => {
+    const kind = annotation.type === "media" ? `媒体（${annotation.mediaType}）` : `${LEVEL_LABELS[annotation.level] || "标记"}文字${annotation.weight === "bold" ? "（加粗）" : ""}`;
     lines.push(`### ${index + 1}. ${kind}`, "");
-    lines.push(annotation.type === "media" ? mediaMarkdown(annotation) : `> ${escapeMarkdown(annotation.quote)}`);
+    lines.push(annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation));
     if (annotation.note) lines.push(`- 笔记：${escapeMarkdown(annotation.note)}`);
     lines.push("");
   });

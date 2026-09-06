@@ -1,8 +1,7 @@
 const LEVELS = [
-  { id: "important", label: "重要", color: "#fde68a" },
+  { id: "important", label: "重要", color: "#fecaca" },
   { id: "idea", label: "想法", color: "#bbf7d0" },
-  { id: "question", label: "疑问", color: "#bfdbfe" },
-  { id: "review", label: "复习", color: "#fbcfe8" }
+  { id: "question", label: "疑问", color: "#bfdbfe" }
 ];
 
 chrome.runtime.onInstalled.addListener(() => {

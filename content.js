@@ -1,11 +1,17 @@
 const STORAGE_PREFIX = "web-highlighter-notes:";
 const LEVELS = [
-  { id: "important", label: "重要", color: "#fde68a" },
+  { id: "important", label: "重要", color: "#fecaca" },
   { id: "idea", label: "想法", color: "#bbf7d0" },
-  { id: "question", label: "疑问", color: "#bfdbfe" },
-  { id: "review", label: "复习", color: "#fbcfe8" }
+  { id: "question", label: "疑问", color: "#bfdbfe" }
+];
+const IMPORTANT_COLORS = [
+  { label: "红色", color: "#fecaca" },
+  { label: "绿色", color: "#bbf7d0" },
+  { label: "橙色", color: "#fed7aa" }
 ];
 let selectedMedia = null;
+let activeAnnotationId = null;
+let activeWeight = "normal";
 let toastTimer;
 
 const pageKey = () => `${STORAGE_PREFIX}${location.href.split("#")[0]}`;
@@ -79,10 +85,14 @@ async function annotations() {
   return data[pageKey()] || [];
 }
 
+async function persist(items) {
+  await chrome.storage.local.set({ [pageKey()]: items });
+}
+
 async function save(annotation) {
   const items = await annotations();
   items.push(annotation);
-  await chrome.storage.local.set({ [pageKey()]: items });
+  await persist(items);
 }
 
 function showToast(message) {
@@ -103,30 +113,98 @@ function currentSelectionRange() {
   return selection?.rangeCount && !selection.isCollapsed ? selection.getRangeAt(0).cloneRange() : null;
 }
 
+function applyAnnotationStyle(annotation) {
+  document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`).forEach((mark) => {
+    mark.style.backgroundColor = annotation.color;
+  });
+}
+
 async function highlightSelection(level, suppliedRange) {
   const range = suppliedRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
-  const annotation = { id: createId(), type: "text", level: level.id, color: level.color, quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note: "" };
-  applyHighlight(range, annotation);
-  await save(annotation);
+
+  const items = await annotations();
+  const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
+  if (existingIndex >= 0) {
+    const updated = { ...items[existingIndex], level: level.id, color: level.color, weight: activeWeight };
+    items[existingIndex] = updated;
+    await persist(items);
+    applyAnnotationStyle(updated);
+    showToast(`已更新为「${level.label}」标记`);
+  } else {
+    const annotation = {
+      id: createId(), type: "text", level: level.id, color: level.color, weight: activeWeight,
+      quote: range.toString().trim(), selector: selectorFor(range), createdAt: new Date().toISOString(), note: ""
+    };
+    applyHighlight(range, annotation);
+    await save(annotation);
+    showToast(`已保存「${level.label}」标记`);
+  }
+
+  activeAnnotationId = null;
   window.getSelection()?.removeAllRanges();
   document.getElementById("web-notes-toolbar").hidden = true;
-  showToast(`已保存「${level.label}」标记`);
+}
+
+function setWeight(weight) {
+  activeWeight = weight;
+  document.querySelectorAll(".web-notes-weight").forEach((button) => {
+    button.classList.toggle("web-notes-weight-active", button.dataset.weight === weight);
+  });
+}
+
+function levelButton(level, className = "web-notes-level") {
+  const button = document.createElement("button");
+  button.className = className;
+  button.textContent = level.label;
+  button.style.background = level.color;
+  button.addEventListener("mousedown", (event) => { event.preventDefault(); highlightSelection(level); });
+  return button;
 }
 
 function buildUi() {
   const toolbar = document.createElement("div");
   toolbar.id = "web-notes-toolbar";
   toolbar.hidden = true;
-  LEVELS.forEach((level) => {
+
+  const importantGroup = document.createElement("div");
+  importantGroup.className = "web-notes-important-group";
+  importantGroup.append(levelButton(LEVELS[0]));
+  const colorMenu = document.createElement("div");
+  colorMenu.className = "web-notes-color-menu";
+  IMPORTANT_COLORS.forEach((choice) => {
     const button = document.createElement("button");
-    button.className = "web-notes-level";
-    button.textContent = level.label;
-    button.style.background = level.color;
-    button.addEventListener("mousedown", (event) => { event.preventDefault(); highlightSelection(level); });
+    button.className = "web-notes-color-choice";
+    button.style.backgroundColor = choice.color;
+    button.title = `${choice.label}重要标记`;
+    button.setAttribute("aria-label", `${choice.label}重要标记`);
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      highlightSelection({ id: "important", label: "重要", color: choice.color });
+    });
+    colorMenu.append(button);
+  });
+  importantGroup.append(colorMenu);
+  toolbar.append(importantGroup);
+  toolbar.append(levelButton(LEVELS[1]));
+  toolbar.append(levelButton(LEVELS[2]));
+
+  const divider = document.createElement("span");
+  divider.className = "web-notes-divider";
+  toolbar.append(divider);
+  [
+    { id: "normal", label: "默认" },
+    { id: "bold", label: "加粗" }
+  ].forEach((weight) => {
+    const button = document.createElement("button");
+    button.className = "web-notes-weight";
+    button.dataset.weight = weight.id;
+    button.textContent = weight.label;
+    button.addEventListener("mousedown", (event) => { event.preventDefault(); setWeight(weight.id); });
     toolbar.append(button);
   });
   document.documentElement.append(toolbar);
+  setWeight(activeWeight);
 
   const mediaToolbar = document.createElement("div");
   mediaToolbar.id = "web-notes-media-toolbar";
@@ -137,7 +215,11 @@ function buildUi() {
   mediaButton.addEventListener("click", async () => {
     if (!selectedMedia) return;
     const source = selectedMedia.currentSrc || selectedMedia.src || selectedMedia.getAttribute("src") || "";
-    const annotation = { id: createId(), type: "media", mediaType: selectedMedia.tagName.toLowerCase(), source, label: selectedMedia.alt || selectedMedia.getAttribute("aria-label") || selectedMedia.title || "媒体内容", createdAt: new Date().toISOString(), note: "" };
+    const annotation = {
+      id: createId(), type: "media", mediaType: selectedMedia.tagName.toLowerCase(), source,
+      label: selectedMedia.alt || selectedMedia.getAttribute("aria-label") || selectedMedia.title || "媒体内容",
+      documentPath: pathFor(selectedMedia), createdAt: new Date().toISOString(), note: ""
+    };
     await save(annotation);
     selectedMedia.classList.remove("web-notes-media-selected");
     selectedMedia = null;
@@ -164,11 +246,26 @@ document.addEventListener("mouseup", (event) => {
   const range = currentSelectionRange();
   const toolbar = document.getElementById("web-notes-toolbar");
   if (!range || event.target.closest?.("#web-notes-toolbar")) return (toolbar.hidden = true);
+  activeAnnotationId = null;
   toolbar.hidden = false;
   position(toolbar, event.clientX, event.clientY + 14);
 });
 
 document.addEventListener("click", (event) => {
+  const mark = event.target.closest?.("mark.web-notes-highlight");
+  if (mark) {
+    const range = document.createRange();
+    range.selectNodeContents(mark);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    activeAnnotationId = mark.dataset.webNotesId;
+    const toolbar = document.getElementById("web-notes-toolbar");
+    toolbar.hidden = false;
+    position(toolbar, event.clientX, event.clientY + 14);
+    return;
+  }
+
   const media = event.target.closest?.("img, video, audio");
   if (!media || event.target.closest("#web-notes-media-toolbar")) return;
   selectedMedia?.classList.remove("web-notes-media-selected");
