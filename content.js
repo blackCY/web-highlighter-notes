@@ -144,6 +144,35 @@ function applyAnnotationStyle(annotation) {
   document.querySelectorAll(`mark[data-web-notes-id="${annotation.id}"]`).forEach((mark) => applyMarkStyle(mark, annotation));
 }
 
+function setDeleteAvailability(visible) {
+  const button = document.getElementById("web-notes-delete");
+  if (button) button.hidden = !visible;
+}
+
+function removeAnnotationMarks(annotationId) {
+  document.querySelectorAll(`mark[data-web-notes-id="${annotationId}"]`).forEach((mark) => {
+    mark.replaceWith(...mark.childNodes);
+  });
+}
+
+async function deleteActiveAnnotation() {
+  if (!activeAnnotationId) return;
+  if (!confirm("确定删除这条笔记吗？此操作会移除网页标记和本地记录。")) return;
+  const items = await annotations();
+  const annotation = items.find((item) => item.id === activeAnnotationId);
+  if (!annotation) return;
+  await persist(items.filter((item) => item.id !== activeAnnotationId));
+  removeAnnotationMarks(annotation.id);
+  const updatedItems = await annotations();
+  renderTextNoteBadges(updatedItems);
+  renderTextTypeBadges(updatedItems);
+  activeAnnotationId = null;
+  window.getSelection()?.removeAllRanges();
+  setDeleteAvailability(false);
+  document.getElementById("web-notes-toolbar").hidden = true;
+  showToast("已删除笔记");
+}
+
 function annotationBadgeTypes(annotation) {
   if (annotation.badgeTypes?.length) return [...new Set(annotation.badgeTypes)];
   if (annotation.type === "heading") return [`h${annotation.headingLevel}`];
@@ -342,6 +371,7 @@ async function highlightSelection(level, suppliedRange, note = null) {
 
   activeAnnotationId = null;
   window.getSelection()?.removeAllRanges();
+  setDeleteAvailability(false);
   document.getElementById("web-notes-toolbar").hidden = true;
 }
 
@@ -424,6 +454,7 @@ async function recordWithWeight(weight) {
   if (activeAnnotationId) {
     activeAnnotationId = null;
     window.getSelection()?.removeAllRanges();
+    setDeleteAvailability(false);
     document.getElementById("web-notes-toolbar").hidden = true;
     return;
   }
@@ -503,6 +534,13 @@ function buildUi() {
     button.addEventListener("mousedown", (event) => { event.preventDefault(); recordWithWeight(weight.id); });
     toolbar.append(button);
   });
+  const deleteButton = document.createElement("button");
+  deleteButton.id = "web-notes-delete";
+  deleteButton.className = "web-notes-delete";
+  deleteButton.textContent = "删除笔记";
+  deleteButton.hidden = true;
+  deleteButton.addEventListener("mousedown", (event) => { event.preventDefault(); deleteActiveAnnotation(); });
+  toolbar.append(deleteButton);
   document.documentElement.append(toolbar);
   setWeight(activeWeight);
 
@@ -594,6 +632,7 @@ document.addEventListener("mouseup", (event) => {
   if (!range) return (toolbar.hidden = true);
   closeNoteEditor();
   activeAnnotationId = null;
+  setDeleteAvailability(false);
   toolbar.hidden = false;
   position(toolbar, event.clientX, event.clientY + 14);
 });
@@ -608,6 +647,7 @@ document.addEventListener("click", async (event) => {
     selection.removeAllRanges();
     selection.addRange(range);
     activeAnnotationId = mark.dataset.webNotesId;
+    setDeleteAvailability(true);
     const annotation = (await annotations()).find((item) => item.id === activeAnnotationId);
     await setWeight(annotation?.weight || "normal", false);
     const toolbar = document.getElementById("web-notes-toolbar");
