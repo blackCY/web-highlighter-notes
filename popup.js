@@ -171,20 +171,16 @@ function render() {
 }
 
 function markdown() {
-  const title = currentTab.title || "未命名网页";
   const orderedAnnotations = annotationsInPageOrder();
-  const hasHeadings = orderedAnnotations.some((annotation) => annotation.type === "heading");
-  const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${pageUrl()}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, ""];
-  if (!hasHeadings) lines.push("## 标记与笔记", "");
+  const lines = [];
   if (!pageAnnotations.length) lines.push("暂无记录。");
   orderedAnnotations.forEach((annotation) => {
     if (annotation.type === "heading") {
-      lines.push(`${"#".repeat(Math.max(1, Math.min(6, annotation.headingLevel || 1)))} ${escapeMarkdown(annotation.quote)}`, "");
+      lines.push(`${"#".repeat(Math.max(1, Math.min(6, annotation.headingLevel || 1)))} ${escapeMarkdown(annotation.quote)}`);
       return;
     }
     lines.push(`- ${annotation.type === "media" ? mediaMarkdown(annotation) : textMarkdown(annotation)}`);
     lines.push(...annotationNoteMarkdown(annotation));
-    lines.push("");
   });
   return lines.join("\n");
 }

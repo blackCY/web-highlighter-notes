@@ -147,12 +147,7 @@ function notesMarkdown({ pageUrl, pageTitle, pageFavicon, annotations }) {
     NOTES_DATA_START,
     payload,
     NOTES_DATA_END,
-    "",
-    `# ${escapeMarkdown(title)}`,
-    "",
-    "## 标记与笔记",
-    "",
-    ...(annotationsInPageOrder(annotations).flatMap((annotation) => [annotationMarkdown(annotation), ""]))
+    ...annotationsInPageOrder(annotations).map(annotationMarkdown)
   ].join("\n")}\n`;
 }
 

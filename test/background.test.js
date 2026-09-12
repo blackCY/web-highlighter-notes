@@ -187,7 +187,7 @@ async function popupHarness() {
   const helperSource = source.slice(0, source.indexOf('document.getElementById("export")'));
   const context = { URL };
   vm.createContext(context);
-  vm.runInContext(`${helperSource}\nglobalThis.__test = { annotationSearchText, orderedAnnotationEntries, exportFilename, setCurrentTab: (tab) => { currentTab = tab; }, setPageAnnotations: (items) => { pageAnnotations = items; } };`, context);
+  vm.runInContext(`${helperSource}\nglobalThis.__test = { annotationSearchText, orderedAnnotationEntries, exportFilename, markdown, setCurrentTab: (tab) => { currentTab = tab; }, setPageAnnotations: (items) => { pageAnnotations = items; } };`, context);
   return context.__test;
 }
 
@@ -251,9 +251,10 @@ test("force deletion clears both current and legacy GitHub note files", async ()
 test("Markdown metadata supports special characters and legacy JSON files", async () => {
   const { api, markdown } = await backgroundHarness();
   const special = { ...annotation("special", "文本 --> <script>"), note: "备注 --> 也不能截断", personalNotes: { idea: "包含 --> 与中文" } };
+  const following = { ...annotation("following", "第二条", 2), level: "note", color: "#e5e7eb" };
   await api.writeGithubNotes({
     pageUrl: "https://example.com", pageTitle: "标题 -->", pageFavicon: "https://static.example/favicon.png",
-    annotations: [special], changedAnnotations: [special]
+    annotations: [special, following], changedAnnotations: [special, following]
   });
 
   const notes = await api.readGithubNotes("https://example.com");
@@ -265,8 +266,10 @@ test("Markdown metadata supports special characters and legacy JSON files", asyn
   assert.match(markdown(), /<span style="background-color: #dc2626;[^>]*"><strong>文本 --&gt; &lt;script&gt;<\/strong><\/span>/);
   assert.doesNotMatch(markdown(), /\[重要\]/);
   assert.match(markdown(), /^---\ntitle: "标题 -->"\nsource_url: "https:\/\/example\.com\/"\nfavicon: "https:\/\/static\.example\/favicon\.png"\nupdated_at: /);
-  assert.match(markdown(), /^# 标题 --\\>$/m);
+  assert.doesNotMatch(markdown(), /^# 标题 --\\>$/m);
   assert.doesNotMatch(markdown(), /^- 原文网址：|^- 最近更新：/m);
+  assert.match(markdown(), /备注 --\\> 也不能截断\n- \[笔记\] 第二条/);
+  assert.doesNotMatch(markdown(), /备注 --\\> 也不能截断\n\n- \[笔记\] 第二条/);
   const legacy = `---\ntitle: "Front Matter 标题"\nsource_url: "https://front-matter.example/article"\nfavicon: "https://front-matter.example/icon.png"\nupdated_at: "2026-09-12T12:00:00.000Z"\n---\n<!-- web-highlighter-notes-data\n${JSON.stringify({ version: 1, pageUrl: "https://legacy.example", pageTitle: "旧标题", annotations: [special] })}\nweb-highlighter-notes-data -->\n`;
   const restored = api.notesFromMarkdown(legacy);
   assert.equal(restored.pageUrl, "https://front-matter.example/article");
@@ -309,6 +312,16 @@ test("Markdown exports use the current page title as the filename", async () => 
   const popup = await popupHarness();
   popup.setCurrentTab({ title: "网页标题：测试", url: "https://www.example.com/article" });
   assert.equal(popup.exportFilename(), "网页标题：测试.md");
+});
+
+test("downloaded Markdown starts with notes and keeps entries compact", async () => {
+  const popup = await popupHarness();
+  popup.setCurrentTab({ title: "网页标题", url: "https://example.com/article" });
+  popup.setPageAnnotations([
+    annotation("first", "第一条", 1),
+    annotation("second", "第二条", 2)
+  ]);
+  assert.equal(popup.markdown(), "- <span style=\"background-color: #dc2626; color: #ffffff; font-size: 1em; padding: 1px 4px; border-radius: 3px;\">第一条</span>\n- <span style=\"background-color: #dc2626; color: #ffffff; font-size: 1em; padding: 1px 4px; border-radius: 3px;\">第二条</span>");
 });
 
 test("extension popup lists notes without per-note editing controls", async () => {
