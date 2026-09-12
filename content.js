@@ -54,9 +54,12 @@ function locatorFor(element) {
   return { type: "tag", tagName: element?.tagName?.toLowerCase() || "body" };
 }
 
+function rootForElement(element) {
+  return element?.closest?.("[id]") || [element, ...(element?.parents || [])].find((candidate) => candidate?.classList?.length) || element || document.body;
+}
+
 function rootForRange(range) {
-  const commonElement = elementFor(range.commonAncestorContainer) || document.body;
-  return commonElement.closest("[id]") || [commonElement, ...commonElement.parents].find((element) => element.classList?.length) || commonElement;
+  return rootForElement(elementFor(range.commonAncestorContainer) || document.body);
 }
 
 function textOffset(root, container, offset) {
@@ -89,6 +92,18 @@ function selectorFor(range) {
     prefix: text.slice(Math.max(0, start - 80), start),
     suffix: text.slice(end, end + 80),
     order: [...document.querySelectorAll("*")].indexOf(root)
+  };
+}
+
+function mediaPositionSelector(media) {
+  const root = rootForElement(media);
+  const range = document.createRange();
+  range.setStart(root, 0);
+  if (root !== media) range.setEndBefore(media);
+  return {
+    anchor: locatorFor(root),
+    order: [...document.querySelectorAll("*")].indexOf(root),
+    start: range.toString().length
   };
 }
 
@@ -220,12 +235,35 @@ async function annotations() {
   return cachedAnnotations;
 }
 
-async function persist(items, changedAnnotations = [], deletedAnnotationIds = []) {
-  const notes = await githubNotesRequest("SAVE_GITHUB_NOTES", {
-    pageUrl: pageUrl(), pageTitle: document.title, pageFavicon: pageFavicon(), annotations: items, changedAnnotations, deletedAnnotationIds
+function setToolbarSaving(isSaving) {
+  document.querySelectorAll("#web-notes-toolbar, #web-notes-media-toolbar").forEach((toolbar) => {
+    if (isSaving && toolbar.hidden) return;
+    toolbar.classList.toggle("web-notes-toolbar-saving", isSaving);
+    const indicator = toolbar.querySelector(".web-notes-saving");
+    if (indicator) indicator.hidden = !isSaving;
+    toolbar.querySelectorAll("button").forEach((button) => {
+      if (isSaving) {
+        button.dataset.webNotesWasDisabled = String(button.disabled);
+        button.disabled = true;
+      } else if (Object.hasOwn(button.dataset, "webNotesWasDisabled")) {
+        button.disabled = button.dataset.webNotesWasDisabled === "true";
+        delete button.dataset.webNotesWasDisabled;
+      }
+    });
   });
-  cachedAnnotations = notes.annotations;
-  return cachedAnnotations;
+}
+
+async function persist(items, changedAnnotations = [], deletedAnnotationIds = []) {
+  setToolbarSaving(true);
+  try {
+    const notes = await githubNotesRequest("SAVE_GITHUB_NOTES", {
+      pageUrl: pageUrl(), pageTitle: document.title, pageFavicon: pageFavicon(), annotations: items, changedAnnotations, deletedAnnotationIds
+    });
+    cachedAnnotations = notes.annotations;
+    return cachedAnnotations;
+  } finally {
+    setToolbarSaving(false);
+  }
 }
 
 async function githubNotesRequest(type, payload) {
@@ -561,6 +599,29 @@ function mediaForAnnotation(annotation) {
   });
 }
 
+async function migrateMediaPositions(items) {
+  const changedAnnotations = [];
+  const updatedItems = items.map((annotation) => {
+    if (annotation.type !== "media" || Number.isInteger(annotation.selector?.order)) return annotation;
+    const media = mediaForAnnotation(annotation);
+    if (!media) return annotation;
+    const updated = {
+      ...annotation,
+      locator: annotation.locator || locatorFor(media),
+      selector: mediaPositionSelector(media)
+    };
+    changedAnnotations.push(updated);
+    return updated;
+  });
+  if (!changedAnnotations.length) return items;
+  try {
+    return await persist(updatedItems, changedAnnotations);
+  } catch (error) {
+    console.warn("Web Highlighter Notes 媒体排序迁移失败：", error);
+    return items;
+  }
+}
+
 function positionMediaBadges() {
   for (const { badge, media } of mediaBadges.values()) {
     const bounds = media.getBoundingClientRect();
@@ -819,6 +880,21 @@ function levelButton(level, className = "web-notes-level") {
   return button;
 }
 
+function appendSavingIndicator(toolbar) {
+  const indicator = document.createElement("span");
+  indicator.className = "web-notes-saving";
+  indicator.hidden = true;
+  indicator.setAttribute("role", "status");
+  indicator.setAttribute("aria-live", "polite");
+  const spinner = document.createElement("span");
+  spinner.className = "web-notes-saving-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.textContent = "正在同步";
+  indicator.append(spinner, label);
+  toolbar.append(indicator);
+}
+
 function buildUi() {
   const toolbar = document.createElement("div");
   toolbar.id = "web-notes-toolbar";
@@ -909,6 +985,7 @@ function buildUi() {
   deleteButton.addEventListener("mousedown", (event) => { event.preventDefault(); });
   deleteButton.addEventListener("click", showDeleteConfirmation);
   toolbar.append(deleteButton);
+  appendSavingIndicator(toolbar);
   document.documentElement.append(toolbar);
   setWeight(activeWeight);
 
@@ -1005,7 +1082,7 @@ function buildUi() {
     const annotation = {
       id: createId(), type: "media", mediaType: selectedMedia.tagName.toLowerCase(), source,
       label: selectedMedia.alt || selectedMedia.getAttribute("aria-label") || selectedMedia.title || "媒体内容",
-      locator: locatorFor(selectedMedia), createdAt: new Date().toISOString(), note: ""
+      locator: locatorFor(selectedMedia), selector: mediaPositionSelector(selectedMedia), createdAt: new Date().toISOString(), note: ""
     };
     await save(annotation);
     await renderMediaBadges(await annotations());
@@ -1013,6 +1090,7 @@ function buildUi() {
     showToast("已保存媒体记录");
   }));
   mediaToolbar.append(mediaButton);
+  appendSavingIndicator(mediaToolbar);
   document.documentElement.append(mediaToolbar);
 
   const mediaBadgesContainer = document.createElement("div");
@@ -1033,7 +1111,7 @@ function buildUi() {
 }
 
 async function restore() {
-  const items = await annotations();
+  const items = await migrateMediaPositions(await annotations());
   for (const annotation of items) {
     if (annotation.type !== "text" && annotation.type !== "heading") continue;
     if (document.querySelector(`mark[data-web-notes-id="${annotation.id}"]`)) continue;

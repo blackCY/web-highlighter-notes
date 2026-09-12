@@ -56,6 +56,7 @@
 .web-notes-delete { flex: none; border: 0; border-radius: 7px; padding: 7px 9px; color: #fff; background: #dc2626; cursor: pointer; font: inherit; font-weight: 600; }
 .web-notes-delete:hover { background: #b91c1c; }
 .web-notes-delete[hidden] { display: none; }
+.web-notes-saving { display: inline-flex; align-items: center; gap: 6px; padding: 0 3px; color: #475569; font-weight: 600; white-space: nowrap; }.web-notes-saving[hidden] { display: none; }.web-notes-saving-spinner { width: 12px; height: 12px; border: 2px solid #bfdbfe; border-top-color: #2563eb; border-radius: 50%; animation: web-notes-saving-spin .72s linear infinite; }.web-notes-toolbar-saving > :not(.web-notes-saving) { opacity: .42; transition: opacity .16s ease; }.web-notes-toolbar-saving button:disabled { cursor: wait; }@keyframes web-notes-saving-spin { to { transform: rotate(360deg); } }
 #web-notes-note-editor { display: block; width: min(320px, calc(100vw - 24px)); padding: 12px; }
 .web-notes-note-editor strong { display: block; margin-bottom: 8px; font-size: 13px; }
 .web-notes-note-editor textarea { box-sizing: border-box; display: block; width: 100%; min-height: 92px; padding: 9px 10px; color: #172033; background: #f8fafc; border: 1px solid #bfdbfe; border-radius: 8px; outline: none; resize: vertical; font: inherit; line-height: 1.45; }

@@ -331,6 +331,16 @@ test("extension popup lists notes without per-note editing controls", async () =
   assert.match(await readFile("content.js", "utf8"), /function openAnnotationNoteEditor/);
 });
 
+test("page toolbars stay visible with a loading state while notes sync", async () => {
+  const [source, css] = await Promise.all([readFile("content.js", "utf8"), readFile("content.css", "utf8")]);
+  assert.match(source, /function setToolbarSaving\(isSaving\)/);
+  assert.match(source, /setToolbarSaving\(true\);/);
+  assert.match(source, /appendSavingIndicator\(toolbar\)/);
+  assert.match(source, /appendSavingIndicator\(mediaToolbar\)/);
+  assert.match(css, /\.web-notes-saving-spinner/);
+  assert.match(css, /@keyframes web-notes-saving-spin/);
+});
+
 test("extension popup shows a fixed-height loading skeleton for the note list", async () => {
   const [html, css, source, content] = await Promise.all([readFile("popup.html", "utf8"), readFile("popup.css", "utf8"), readFile("popup.js", "utf8"), readFile("content.js", "utf8")]);
   assert.match(html, /id="notes-skeleton"/);
@@ -442,11 +452,33 @@ test("popup orders annotations by page position while retaining source indexes f
   const popup = await popupHarness();
   popup.setPageAnnotations([
     { id: "bottom", quote: "底部", selector: { order: 9, start: 0 }, createdAt: "2026-09-12T00:00:00.000Z" },
-    { id: "top", quote: "顶部", selector: { order: 2, start: 0 }, createdAt: "2026-09-12T00:01:00.000Z" }
+    { id: "media", type: "media", source: "https://example.com/image.png", selector: { order: 2, start: 5 }, createdAt: "2026-09-12T00:00:30.000Z" },
+    { id: "top", quote: "顶部", selector: { order: 2, start: 10 }, createdAt: "2026-09-12T00:01:00.000Z" }
   ]);
   const entries = popup.orderedAnnotationEntries();
-  assert.deepEqual(Array.from(entries, ({ annotation, index }) => [annotation.id, index]), [["top", 1], ["bottom", 0]]);
+  assert.deepEqual(Array.from(entries, ({ annotation, index }) => [annotation.id, index]), [["media", 1], ["top", 2], ["bottom", 0]]);
   assert.match(popup.annotationSearchText({ quote: "摘录", personalNotes: { idea: "可搜索的想法" } }), /可搜索的想法/);
+});
+
+test("media notes store a selector and repair legacy media ordering", async () => {
+  const source = await readFile("content.js", "utf8");
+  assert.match(source, /function mediaPositionSelector\(media\)/);
+  assert.match(source, /async function migrateMediaPositions\(items\)/);
+  assert.match(source, /selector: mediaPositionSelector\(selectedMedia\)/);
+  assert.match(source, /const items = await migrateMediaPositions\(await annotations\(\)\);/);
+});
+
+test("GitHub Markdown keeps media at its saved page position", async () => {
+  const { api, markdown } = await backgroundHarness();
+  const media = {
+    id: "media", type: "media", mediaType: "img", source: "https://example.com/image.png", label: "配图",
+    selector: { order: 2, start: 5 }, createdAt: "2026-09-12T00:00:00.000Z"
+  };
+  const text = { ...annotation("text", "后面的文字", 2), selector: { order: 2, start: 10 } };
+
+  await api.writeGithubNotes({ pageUrl: "https://example.com/article", pageTitle: "页面", annotations: [text, media], changedAnnotations: [text, media] });
+
+  assert.ok(markdown().indexOf("![配图](https://example.com/image.png)") < markdown().indexOf("后面的文字"));
 });
 
 test("only duplicate selections are blocked while contained ranges remain recordable", async () => {
