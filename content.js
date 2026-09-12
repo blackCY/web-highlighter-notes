@@ -688,12 +688,19 @@ function showMediaToolbar(media) {
   button.classList.toggle("web-notes-media-delete", annotations.length > 0);
   const bounds = media.getBoundingClientRect();
   toolbar.hidden = false;
-  position(toolbar, bounds.left + 8, bounds.top + 8);
+  const gap = 8;
+  const aboveTop = bounds.top - toolbar.offsetHeight - gap;
+  if (aboveTop >= 8) {
+    position(toolbar, bounds.left, aboveTop);
+    return;
+  }
+  const leftSide = bounds.left - toolbar.offsetWidth - gap;
+  position(toolbar, leftSide >= 8 ? leftSide : bounds.right + gap, Math.max(8, bounds.top));
 }
 
 function scheduleHideMediaToolbar() {
   clearTimeout(mediaToolbarTimer);
-  mediaToolbarTimer = setTimeout(hideMediaToolbar, 160);
+  mediaToolbarTimer = setTimeout(hideMediaToolbar, 500);
 }
 
 async function highlightSelection(level, suppliedRange, note = null) {
@@ -1091,6 +1098,12 @@ function buildUi() {
   }));
   mediaToolbar.append(mediaButton);
   appendSavingIndicator(mediaToolbar);
+  mediaToolbar.addEventListener("mouseenter", () => {
+    clearTimeout(mediaToolbarTimer);
+  });
+  mediaToolbar.addEventListener("mouseleave", () => {
+    scheduleHideMediaToolbar();
+  });
   document.documentElement.append(mediaToolbar);
 
   const mediaBadgesContainer = document.createElement("div");

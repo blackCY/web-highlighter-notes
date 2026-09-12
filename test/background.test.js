@@ -412,6 +412,20 @@ test("page toolbars stay visible with a loading state while notes sync", async (
   assert.match(css, /@keyframes web-notes-saving-spin/);
 });
 
+test("media toolbar is positioned outside the media at its upper-left side", async () => {
+  const source = await readFile("content.js", "utf8");
+  assert.match(source, /const aboveTop = bounds\.top - toolbar\.offsetHeight - gap/);
+  assert.match(source, /position\(toolbar, bounds\.left, aboveTop\)/);
+  assert.match(source, /const leftSide = bounds\.left - toolbar\.offsetWidth - gap/);
+});
+
+test("media toolbar stays available while moving from media to its controls", async () => {
+  const source = await readFile("content.js", "utf8");
+  assert.match(source, /mediaToolbar\.addEventListener\("mouseenter"/);
+  assert.match(source, /mediaToolbar\.addEventListener\("mouseleave"/);
+  assert.match(source, /setTimeout\(hideMediaToolbar, 500\)/);
+});
+
 test("extension popup shows a fixed-height loading skeleton for the note list", async () => {
   const [html, css, source, content] = await Promise.all([readFile("popup.html", "utf8"), readFile("popup.css", "utf8"), readFile("popup.js", "utf8"), readFile("content.js", "utf8")]);
   assert.match(html, /id="notes-skeleton"/);
