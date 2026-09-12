@@ -1,0 +1,11 @@
+---
+title: "哔哩哔哩 (゜-゜)つロ 干杯~-bilibili"
+source_url: "https://www.bilibili.com/"
+favicon: "https://i0.hdslb.com/bfs/static/jinkela/long/images/512.png"
+updated_at: "2026-09-12T15:17:41.431Z"
+---
+
+<!-- web-highlighter-notes-data
+eyJ2ZXJzaW9uIjoxLCJwYWdlVXJsIjoiaHR0cHM6Ly93d3cuYmlsaWJpbGkuY29tLyIsInBhZ2VUaXRsZSI6IuWTlOWTqeWTlOWTqSAo44KcLeOCnCnjgaTjg60g5bmy5p2vfi1iaWxpYmlsaSIsInBhZ2VGYXZpY29uIjoiaHR0cHM6Ly9pMC5oZHNsYi5jb20vYmZzL3N0YXRpYy9qaW5rZWxhL2xvbmcvaW1hZ2VzLzUxMi5wbmciLCJ1cGRhdGVkQXQiOiIyMDI2LTA5LTEyVDE1OjE3OjQxLjQzMVoiLCJhbm5vdGF0aW9ucyI6W3siaWQiOiIyYWUzYTljYi1lYjg1LTRmZDAtYTIyMC05MTczYjI3NGRlYTQiLCJ0eXBlIjoibWVkaWEiLCJtZWRpYVR5cGUiOiJpbWciLCJzb3VyY2UiOiJodHRwczovL2kxLmhkc2xiLmNvbS9iZnMvZmFjZS9iMzdjNTVhMjQzZTk4Mjg1MDRhODM3MDU1NzJlY2EyNGFlNTFmNTM4LmpwZ0A5MndfOTJoLmF2aWYiLCJsYWJlbCI6IuWqkuS9k+WGheWuuSIsImxvY2F0b3IiOnsidHlwZSI6ImlkIiwidmFsdWUiOiJhcHAifSwic2VsZWN0b3IiOnsiYW5jaG9yIjp7InR5cGUiOiJpZCIsInZhbHVlIjoiYXBwIn0sIm9yZGVyIjo0NCwic3RhcnQiOjEyMH0sImNyZWF0ZWRBdCI6IjIwMjYtMDktMTJUMTU6MTc6MzYuODMwWiIsIm5vdGUiOiIifV19
+web-highlighter-notes-data -->
+- [媒体] ![媒体内容](https://i1.hdslb.com/bfs/face/b37c55a243e9828504a83705572eca24ae51f538.jpg@92w_92h.avif)
