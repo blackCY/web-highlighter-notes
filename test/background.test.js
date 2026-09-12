@@ -127,6 +127,48 @@ async function multiFileDeletionHarness() {
   };
 }
 
+async function allNotesHarness() {
+  const settings = {
+    [SETTINGS_KEY]: { repository: "blackCY/web-highlighter-notes", branch: "main", directory: "notes", token: "test-token" }
+  };
+  const files = new Map();
+  const requestPath = (url) => decodeURIComponent(new URL(url).pathname.replace(/^\/repos\/[^/]+\/[^/]+\/contents\//, ""));
+  const context = {
+    URL, TextDecoder, TextEncoder, Uint8Array, atob, btoa,
+    chrome: {
+      storage: { local: { get: async (key) => ({ [key]: settings[key] }) } },
+      runtime: { onInstalled: { addListener() {} }, onMessage: { addListener() {} } },
+      contextMenus: { removeAll() {}, create() {}, onClicked: { addListener() {} } }
+    },
+    fetch: async (url, options = {}) => {
+      const path = requestPath(url);
+      if (!options.method && path === "notes") {
+        return { ok: true, status: 200, json: async () => [...files.keys()].map((filePath) => ({ type: "file", name: filePath.split("/").at(-1), path: filePath })) };
+      }
+      const file = files.get(path);
+      if (!options.method) {
+        if (!file) return { ok: false, status: 404, json: async () => ({ message: "Not Found" }) };
+        return { ok: true, status: 200, json: async () => file };
+      }
+      if (options.method === "DELETE") {
+        const body = JSON.parse(options.body);
+        if (!file || file.sha !== body.sha) return { ok: false, status: 422, json: async () => ({ message: "sha does not match" }) };
+        files.delete(path);
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      throw new Error(`Unexpected request: ${options.method}`);
+    }
+  };
+  const source = await readFile("background.js", "utf8");
+  vm.createContext(context);
+  vm.runInContext(`${source}\nglobalThis.__test = { deleteGithubNoteFile, listGithubNotes };`, context);
+  return {
+    api: context.__test,
+    addNote: (path, content, sha = path) => files.set(path, { sha, content: Buffer.from(content, "utf8").toString("base64") }),
+    filePaths: () => [...files.keys()]
+  };
+}
+
 async function locatorHarness() {
   const source = await readFile("content.js", "utf8");
   const helperSource = source.slice(0, source.indexOf("function textNodeAtOffset"));
@@ -248,6 +290,22 @@ test("force deletion clears both current and legacy GitHub note files", async ()
   assert.deepEqual(Array.from(filePaths()), []);
 });
 
+test("all GitHub notes can be listed with empty-body detection and deleted individually", async () => {
+  const { api, addNote, filePaths } = await allNotesHarness();
+  const empty = `---\ntitle: "空笔记"\nsource_url: "https://empty.example/"\n---\n<!-- web-highlighter-notes-data\n${JSON.stringify({ pageUrl: "https://empty.example/", pageTitle: "空笔记", annotations: [] })}\nweb-highlighter-notes-data -->\n`;
+  const full = `---\ntitle: "完整笔记"\nsource_url: "https://full.example/"\n---\n<!-- web-highlighter-notes-data\n${JSON.stringify({ pageUrl: "https://full.example/", pageTitle: "完整笔记", annotations: [{ id: "one" }] })}\nweb-highlighter-notes-data -->\n\n- 正文\n`;
+  addNote("notes/空笔记.md", empty);
+  addNote("notes/完整笔记.md", full);
+
+  const notes = await api.listGithubNotes();
+  assert.equal(notes.length, 2);
+  assert.equal(notes.find((note) => note.pageTitle === "空笔记").isEmpty, true);
+  assert.equal(notes.find((note) => note.pageTitle === "完整笔记").isEmpty, false);
+  await api.deleteGithubNoteFile("notes/空笔记.md");
+  assert.deepEqual(filePaths(), ["notes/完整笔记.md"]);
+  await assert.rejects(api.deleteGithubNoteFile("other/笔记.md"), /无效的笔记文件/);
+});
+
 test("Markdown metadata supports special characters and legacy JSON files", async () => {
   const { api, markdown } = await backgroundHarness();
   const special = { ...annotation("special", "文本 --> <script>"), note: "备注 --> 也不能截断", personalNotes: { idea: "包含 --> 与中文" } };
@@ -329,6 +387,19 @@ test("extension popup lists notes without per-note editing controls", async () =
   assert.doesNotMatch(html, /textarea class="note"/);
   assert.doesNotMatch(source, /note-save/);
   assert.match(await readFile("content.js", "utf8"), /function openAnnotationNoteEditor/);
+});
+
+test("extension popup manages all GitHub notes and labels empty notes", async () => {
+  const [html, css, source] = await Promise.all([readFile("popup.html", "utf8"), readFile("popup.css", "utf8"), readFile("popup.js", "utf8")]);
+  assert.match(html, /id="all-notes-toggle"/);
+  assert.match(html, /id="all-notes-list"/);
+  assert.match(html, /id="all-notes-list"/);
+  assert.match(css, /\.all-note-empty/);
+  assert.match(css, /\.all-note-inline-confirm/);
+  assert.match(source, /LIST_GITHUB_NOTES/);
+  assert.match(source, /DELETE_GITHUB_NOTE_FILE/);
+  assert.match(source, /note\.isEmpty/);
+  assert.match(source, /\.all-note-confirm/);
 });
 
 test("page toolbars stay visible with a loading state while notes sync", async () => {

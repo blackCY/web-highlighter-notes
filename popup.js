@@ -5,6 +5,8 @@ let currentTab;
 let pageAnnotations = [];
 let filterQuery = "";
 let loadError = "";
+let allNotes = [];
+let pendingDeleteNotePath = "";
 let notesLoadingStartedAt = 0;
 const NOTES_LOADING_MINIMUM_DURATION = 180;
 
@@ -138,6 +140,57 @@ function githubStatus(message) {
   document.getElementById("github-status").textContent = message;
 }
 
+function noteHostname(note) {
+  try {
+    return new URL(note.pageUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return note.path;
+  }
+}
+
+function renderAllNotes() {
+  const list = document.getElementById("all-notes-list");
+  const status = document.getElementById("all-notes-status");
+  status.hidden = allNotes.length > 0;
+  status.textContent = allNotes.length ? "" : "还没有可管理的笔记。";
+  list.innerHTML = allNotes.map((note) => {
+    const updatedAt = note.updatedAt ? new Date(note.updatedAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" }) : "未记录时间";
+    const count = `${note.annotationCount || 0} 条记录`;
+    const confirmation = pendingDeleteNotePath === note.path
+      ? '<div class="all-note-inline-confirm"><span>确定删除？</span><button class="all-note-cancel" data-note-path="' + escapeHtml(note.path) + '" type="button">取消</button><button class="all-note-confirm" data-note-path="' + escapeHtml(note.path) + '" type="button">确认删除</button></div>'
+      : "";
+    return `<article class="all-note-entry"><div class="all-note-title">${escapeHtml(note.pageTitle || note.path)}</div><div class="all-note-meta"><span class="all-note-url">${escapeHtml(noteHostname(note))}</span><span class="all-note-count">${count}</span>${note.isEmpty ? '<span class="all-note-empty">空笔记</span>' : ""}<button class="all-note-delete" data-note-path="${escapeHtml(note.path)}" type="button">删除</button></div><div class="all-note-meta"><time>${escapeHtml(updatedAt)}</time></div>${confirmation}</article>`;
+  }).join("");
+}
+
+function setAllNotesView(isVisible) {
+  document.getElementById("current-page-notes").hidden = isVisible;
+  document.getElementById("all-notes").hidden = !isVisible;
+  document.getElementById("page-actions").hidden = isVisible;
+  document.getElementById("all-notes-toggle").textContent = isVisible ? "当前页面" : "所有笔记";
+  if (!isVisible) {
+    pendingDeleteNotePath = "";
+  }
+}
+
+async function loadAllNotes() {
+  const status = document.getElementById("all-notes-status");
+  const refresh = document.getElementById("refresh-all-notes");
+  refresh.disabled = true;
+  status.hidden = false;
+  status.textContent = "正在读取 GitHub 笔记…";
+  document.getElementById("all-notes-list").innerHTML = "";
+  try {
+    allNotes = await githubNotesRequest("LIST_GITHUB_NOTES");
+    renderAllNotes();
+  } catch (error) {
+    allNotes = [];
+    status.textContent = `无法读取笔记：${error.message}`;
+  } finally {
+    refresh.disabled = false;
+  }
+}
+
 function setNotesLoading(isLoading) {
   const list = document.getElementById("notes-list");
   if (isLoading) notesLoadingStartedAt = Date.now();
@@ -261,6 +314,54 @@ document.getElementById("github-toggle").addEventListener("click", async () => {
   const settings = document.getElementById("github-settings");
   settings.hidden = !settings.hidden;
   if (!settings.hidden) await loadGithubSettings();
+});
+
+document.getElementById("all-notes-toggle").addEventListener("click", async () => {
+  const isVisible = document.getElementById("all-notes").hidden;
+  setAllNotesView(isVisible);
+  if (isVisible) await loadAllNotes();
+});
+
+document.getElementById("refresh-all-notes").addEventListener("click", () => {
+  loadAllNotes();
+});
+
+document.getElementById("all-notes-list").addEventListener("click", async (event) => {
+  const deleteButton = event.target.closest(".all-note-delete");
+  const cancelButton = event.target.closest(".all-note-cancel");
+  const confirmButton = event.target.closest(".all-note-confirm");
+  if (deleteButton) {
+    pendingDeleteNotePath = deleteButton.dataset.notePath;
+    renderAllNotes();
+    return;
+  }
+  if (cancelButton) {
+    pendingDeleteNotePath = "";
+    renderAllNotes();
+    return;
+  }
+  if (!confirmButton) return;
+  const path = confirmButton.dataset.notePath;
+  confirmButton.disabled = true;
+  confirmButton.textContent = "正在删除…";
+  try {
+    const deletedNote = allNotes.find((note) => note.path === path);
+    await githubNotesRequest("DELETE_GITHUB_NOTE_FILE", { path });
+    allNotes = allNotes.filter((note) => note.path !== path);
+    pendingDeleteNotePath = "";
+    renderAllNotes();
+    if (deletedNote?.pageUrl === pageUrl()) {
+      pageAnnotations = [];
+      render();
+      await chrome.tabs.reload(currentTab.id);
+    }
+  } catch (error) {
+    document.getElementById("all-notes-status").hidden = false;
+    document.getElementById("all-notes-status").textContent = `无法删除笔记：${error.message}`;
+  } finally {
+    confirmButton.disabled = false;
+    confirmButton.textContent = "确认删除";
+  }
 });
 
 document.getElementById("toggle-github-token").addEventListener("click", (event) => {

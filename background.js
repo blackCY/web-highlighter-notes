@@ -318,6 +318,62 @@ async function githubFilesMatchingPageUrl(settings, pageUrl) {
   }
 }
 
+function noteBody(content) {
+  return String(content)
+    .replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")
+    .replace(/<!-- web-highlighter-notes-data\r?\n[\s\S]*?web-highlighter-notes-data -->\r?\n?/, "")
+    .trim();
+}
+
+async function listGithubNotes() {
+  const settings = validatedGithubSettings(await githubSettings());
+  const directory = notesDirectory(settings);
+  if (!directory) return [];
+  const items = await githubRequest(settings, `/repos/${settings.repository}/contents/${encodeURIComponent(directory).replace(/%2F/g, "/")}?ref=${encodeURIComponent(settings.branch)}`);
+  if (!Array.isArray(items)) return [];
+  const notes = [];
+  for (const item of items.filter((entry) => entry.type === "file" && entry.name.endsWith(".md"))) {
+    try {
+      const file = await githubFileAtPath(settings, item.path);
+      if (!file) continue;
+      const metadata = notesFromMarkdown(file.content);
+      notes.push({
+        path: file.path,
+        pageTitle: metadata.pageTitle || item.name.slice(0, -3),
+        pageUrl: metadata.pageUrl || "",
+        updatedAt: metadata.updatedAt || "",
+        annotationCount: metadata.annotations.length,
+        isEmpty: !noteBody(file.content)
+      });
+    } catch (error) {
+      console.warn("Web Highlighter Notes 笔记列表读取失败：", error);
+    }
+  }
+  return notes.sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0) || left.path.localeCompare(right.path));
+}
+
+async function deleteGithubNoteFile(path) {
+  const settings = validatedGithubSettings(await githubSettings());
+  const directory = notesDirectory(settings);
+  const normalizedPath = String(path || "");
+  if (!normalizedPath.endsWith(".md") || normalizedPath.split("/").includes("..") || (directory && !normalizedPath.startsWith(`${directory}/`))) throw new Error("无效的笔记文件");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const file = await githubFileAtPath(settings, normalizedPath);
+    if (!file) return { deleted: false };
+    try {
+      await githubRequest(settings, `/repos/${settings.repository}/contents/${encodeURIComponent(normalizedPath).replace(/%2F/g, "/")}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "notes: delete managed note", sha: file.sha, branch: settings.branch })
+      });
+      return { deleted: true };
+    } catch (error) {
+      if (attempt === 0 && (error.status === 409 || error.status === 422)) continue;
+      throw error;
+    }
+  }
+}
+
 async function githubWriteTarget(settings, pageUrl, pageTitle, sourceFile) {
   for (let number = 1; number <= 99; number += 1) {
     const path = numberedNotesPath(settings, pageUrl, pageTitle, number);
@@ -463,8 +519,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const actions = {
     GET_GITHUB_NOTES: () => runNoteOperation(canonicalPageUrl(message.pageUrl), () => readGithubNotes(canonicalPageUrl(message.pageUrl), message.pageTitle)),
+    LIST_GITHUB_NOTES: () => listGithubNotes(),
     SAVE_GITHUB_NOTES: () => runNoteOperation(canonicalPageUrl(message.pageUrl), () => writeGithubNotes(message)),
     DELETE_GITHUB_NOTES: () => runNoteOperation(canonicalPageUrl(message.pageUrl), () => deleteGithubNotes(message.pageUrl, message.pageTitle)),
+    DELETE_GITHUB_NOTE_FILE: () => deleteGithubNoteFile(message.path),
     VERIFY_GITHUB_SETTINGS: () => verifyGithubSettings(message.settings),
     DOWNLOAD_MARKDOWN: () => downloadMarkdown(message)
   };
