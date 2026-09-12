@@ -241,7 +241,11 @@ function notePaths(settings, pageUrl, pageTitle = "") {
 }
 
 async function downloadMarkdown({ filename, content }) {
-  const safeFilename = String(filename || "web-notes.md").replace(/[^\w.-]/g, "-");
+  const safeFilename = String(filename || "web-notes.md")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+|\.+$/g, "");
   if (!safeFilename.endsWith(".md") || !content) throw new Error("无效的 Markdown 导出内容");
   const downloadId = await chrome.downloads.download({
     url: `data:text/markdown;charset=utf-8,${encodeURIComponent(String(content))}`,

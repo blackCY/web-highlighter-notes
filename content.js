@@ -1156,7 +1156,11 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "GET_PAGE_ANNOTATIONS") {
+    sendResponse({ ready: cachedAnnotations !== null, annotations: cachedAnnotations || [] });
+    return;
+  }
   if (message.type === "SHOW_MARKDOWN_PREVIEW") {
     showMarkdownPreview(message.markdown);
     return;

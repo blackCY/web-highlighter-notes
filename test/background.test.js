@@ -187,7 +187,7 @@ async function popupHarness() {
   const helperSource = source.slice(0, source.indexOf('document.getElementById("export")'));
   const context = { URL };
   vm.createContext(context);
-  vm.runInContext(`${helperSource}\nglobalThis.__test = { annotationSearchText, orderedAnnotationEntries, setPageAnnotations: (items) => { pageAnnotations = items; } };`, context);
+  vm.runInContext(`${helperSource}\nglobalThis.__test = { annotationSearchText, orderedAnnotationEntries, exportFilename, setCurrentTab: (tab) => { currentTab = tab; }, setPageAnnotations: (items) => { pageAnnotations = items; } };`, context);
   return context.__test;
 }
 
@@ -299,6 +299,16 @@ test("GitHub settings are verified and Markdown exports use browser downloads", 
   assert.equal(download().filename, "web-highlighter-notes/example.md");
   assert.match(download().url, /^data:text\/markdown;charset=utf-8,/);
   assert.equal(download().saveAs, false);
+
+  const chineseResult = await api.downloadMarkdown({ filename: "网页标题：测试.md", content: "# 测试\n" });
+  assert.equal(chineseResult.filename, "网页标题：测试.md");
+  assert.equal(download().filename, "web-highlighter-notes/网页标题：测试.md");
+});
+
+test("Markdown exports use the current page title as the filename", async () => {
+  const popup = await popupHarness();
+  popup.setCurrentTab({ title: "网页标题：测试", url: "https://www.example.com/article" });
+  assert.equal(popup.exportFilename(), "网页标题：测试.md");
 });
 
 test("extension popup lists notes without per-note editing controls", async () => {
@@ -306,6 +316,17 @@ test("extension popup lists notes without per-note editing controls", async () =
   assert.doesNotMatch(html, /textarea class="note"/);
   assert.doesNotMatch(source, /note-save/);
   assert.match(await readFile("content.js", "utf8"), /function openAnnotationNoteEditor/);
+});
+
+test("extension popup shows a fixed-height loading skeleton for the note list", async () => {
+  const [html, css, source, content] = await Promise.all([readFile("popup.html", "utf8"), readFile("popup.css", "utf8"), readFile("popup.js", "utf8"), readFile("content.js", "utf8")]);
+  assert.match(html, /id="notes-skeleton"/);
+  assert.match(css, /#notes-list \{ height: 220px; overflow-y: auto; \}/);
+  assert.match(css, /#notes-list > \[hidden\] \{ display: none !important; \}/);
+  assert.match(source, /function setNotesLoading\(isLoading\)/);
+  assert.match(source, /NOTES_LOADING_MINIMUM_DURATION = 180/);
+  assert.match(source, /async function currentPageAnnotations\(\)/);
+  assert.match(content, /message\.type === "GET_PAGE_ANNOTATIONS"/);
 });
 
 test("extension popup provides protected GitHub Token viewing and copying controls", async () => {

@@ -5,6 +5,8 @@ let currentTab;
 let pageAnnotations = [];
 let filterQuery = "";
 let loadError = "";
+let notesLoadingStartedAt = 0;
+const NOTES_LOADING_MINIMUM_DURATION = 180;
 
 const escapeHtml = (text) => String(text).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 const escapeMarkdown = (text) => String(text).replace(/[\\`*_[\]<>]/g, "\\$&");
@@ -113,6 +115,15 @@ async function exportMarkdown() {
   return githubNotesRequest("DOWNLOAD_MARKDOWN", { filename: exportFilename(), content: markdown() });
 }
 
+async function currentPageAnnotations() {
+  try {
+    const response = await chrome.tabs.sendMessage(currentTab.id, { type: "GET_PAGE_ANNOTATIONS" });
+    return response?.ready ? response.annotations || [] : null;
+  } catch {
+    return null;
+  }
+}
+
 async function loadGithubSettings() {
   const stored = await chrome.storage.local.get(GITHUB_SETTINGS_KEY);
   const settings = { ...DEFAULT_GITHUB_SETTINGS, ...(stored[GITHUB_SETTINGS_KEY] || {}) };
@@ -127,11 +138,28 @@ function githubStatus(message) {
   document.getElementById("github-status").textContent = message;
 }
 
+function setNotesLoading(isLoading) {
+  const list = document.getElementById("notes-list");
+  if (isLoading) notesLoadingStartedAt = Date.now();
+  list.setAttribute("aria-busy", String(isLoading));
+  document.getElementById("notes-skeleton").hidden = !isLoading;
+  if (isLoading) {
+    document.getElementById("empty").hidden = true;
+    document.getElementById("notes").innerHTML = "";
+  }
+}
+
+async function waitForNotesLoading() {
+  const remaining = NOTES_LOADING_MINIMUM_DURATION - (Date.now() - notesLoadingStartedAt);
+  if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+}
+
 function render() {
   const normalizedQuery = filterQuery.trim().toLocaleLowerCase();
   const visibleAnnotations = orderedAnnotationEntries()
     .filter(({ annotation }) => !normalizedQuery || annotationSearchText(annotation).includes(normalizedQuery));
   const empty = document.getElementById("empty");
+  setNotesLoading(false);
   empty.hidden = visibleAnnotations.length > 0;
   empty.textContent = loadError || (pageAnnotations.length && normalizedQuery ? "没有匹配的笔记。" : "这个页面还没有记录。");
   document.getElementById("notes").innerHTML = visibleAnnotations.map(({ annotation, index }) => {
@@ -162,14 +190,14 @@ function markdown() {
 }
 
 function exportFilename() {
-  const now = new Date();
-  const timestamp = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
-    .map((part) => String(part).padStart(2, "0"))
-    .join("") + "-" + [now.getHours(), now.getMinutes(), now.getSeconds()]
-    .map((part) => String(part).padStart(2, "0"))
-    .join("");
+  const title = String(currentTab.title || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+|\.+$/g, "")
+    .slice(0, 80);
   const siteName = new URL(currentTab.url).hostname.replace(/^www\./, "") || "web-notes";
-  return `${siteName}-${timestamp}.md`;
+  return `${title || siteName}.md`;
 }
 
 document.getElementById("export").addEventListener("click", async () => {
@@ -215,13 +243,17 @@ document.getElementById("sync").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   button.disabled = true;
   button.textContent = "正在刷新…";
+  setNotesLoading(true);
   try {
     const notes = await githubNotesRequest("GET_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: currentTab.title });
     pageAnnotations = notes?.annotations || [];
     loadError = "";
+    await waitForNotesLoading();
     render();
     await chrome.tabs.reload(currentTab.id);
   } catch (error) {
+    await waitForNotesLoading();
+    render();
     alert(`无法从 GitHub 刷新笔记。\n\n${error.message}`);
   } finally {
     button.disabled = false;
@@ -332,13 +364,20 @@ document.getElementById("filter").addEventListener("input", (event) => {
 });
 
 (async () => {
+  setNotesLoading(true);
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   document.getElementById("page-title").textContent = currentTab.title || currentTab.url;
   try {
-    const notes = await githubNotesRequest("GET_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: currentTab.title });
-    pageAnnotations = notes?.annotations || [];
+    const cached = await currentPageAnnotations();
+    if (cached !== null) {
+      pageAnnotations = cached;
+    } else {
+      const notes = await githubNotesRequest("GET_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: currentTab.title });
+      pageAnnotations = notes?.annotations || [];
+    }
   } catch (error) {
     loadError = `请先打开 GitHub 配置并保存 Token。${error.message}`;
   }
+  await waitForNotesLoading();
   render();
 })();
