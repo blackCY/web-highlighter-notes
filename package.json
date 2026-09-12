@@ -2,7 +2,5 @@
   "name": "web-highlighter-notes",
   "version": "1.0.0",
   "private": true,
-  "scripts": {
-    "exporter": "node export-server.js"
-  }
+  "scripts": { "test": "node --test" }
 }

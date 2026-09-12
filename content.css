@@ -13,6 +13,11 @@
   font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 #web-notes-toolbar[hidden], #web-notes-note-editor[hidden], #web-notes-media-toolbar[hidden] { display: none; }
+#web-notes-delete-confirm { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 7px; padding: 7px; color: #172033; background: #fff; border: 1px solid #fecaca; border-radius: 9px; box-shadow: 0 8px 28px rgba(127, 29, 29, .22); font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: nowrap; }
+#web-notes-delete-confirm[hidden] { display: none; }
+#web-notes-delete-confirm button { flex: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer; font: inherit; font-weight: 600; }
+.web-notes-delete-cancel { color: #475569; background: #e2e8f0; }
+.web-notes-delete-confirm-action { color: #fff; background: #dc2626; }
 .web-notes-level, .web-notes-media-button, .web-notes-weight, .web-notes-color-choice {
   border: 0;
   border-radius: 7px;
@@ -23,6 +28,8 @@
   font-weight: 600;
 }
 .web-notes-level:hover, .web-notes-media-button:hover, .web-notes-weight:hover { filter: brightness(.94); }
+.web-notes-media-delete { color: #fff; background: #dc2626; }
+.web-notes-media-delete:hover { background: #b91c1c; }
 .web-notes-important-group, .web-notes-heading-group { position: relative; }
 .web-notes-color-menu, .web-notes-heading-menu {
   position: absolute;
@@ -58,7 +65,6 @@
 .web-notes-note-cancel { color: #475569; background: #e2e8f0; }
 .web-notes-note-confirm { color: #fff; background: #2563eb; }
 .web-notes-highlight { border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
-.web-notes-heading-highlight { color: inherit; border-bottom: 2px solid #7c3aed; }
 .web-notes-media-selected { outline: 3px solid #60a5fa !important; outline-offset: 3px !important; }
 #web-notes-media-badges { position: fixed; z-index: 2147483646; pointer-events: none; }
 .web-notes-media-badge { position: fixed; padding: 5px 8px; color: #fff; background: #2563eb; border: 1px solid rgba(255, 255, 255, .75); border-radius: 999px; box-shadow: 0 3px 10px rgba(30, 64, 175, .35); font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -73,3 +79,15 @@
   opacity: 0; transform: translateY(10px); transition: .2s ease; pointer-events: none;
 }
 #web-notes-toast.web-notes-toast-visible { opacity: 1; transform: translateY(0); }
+
+#web-notes-markdown-preview { position: fixed; z-index: 2147483647; top: 16px; right: 16px; display: flex; flex-direction: column; width: min(640px, calc(100vw - 32px)); max-height: min(86vh, 900px); color: #172033; background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; box-shadow: 0 14px 40px rgba(15, 23, 42, .28); overflow: hidden; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+#web-notes-markdown-preview[hidden] { display: none; }
+#web-notes-markdown-preview header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; color: #1e3a5f; background: #eff6ff; border-bottom: 1px solid #bfdbfe; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#web-notes-markdown-preview header button { flex: none; border: 0; border-radius: 6px; padding: 5px 8px; color: #475569; background: #dbeafe; cursor: pointer; font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#web-notes-markdown-preview-content { box-sizing: border-box; min-height: 0; margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+#web-notes-markdown-preview-content { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }
+#web-notes-markdown-preview-content h1, #web-notes-markdown-preview-content h2, #web-notes-markdown-preview-content h3, #web-notes-markdown-preview-content h4, #web-notes-markdown-preview-content h5, #web-notes-markdown-preview-content h6 { margin: 16px 0 8px; color: #172033; line-height: 1.3; }
+#web-notes-markdown-preview-content h1 { margin-top: 0; font-size: 22px; } #web-notes-markdown-preview-content h2 { font-size: 18px; } #web-notes-markdown-preview-content h3 { font-size: 16px; } #web-notes-markdown-preview-content h4, #web-notes-markdown-preview-content h5, #web-notes-markdown-preview-content h6 { font-size: 14px; }
+#web-notes-markdown-preview-content p { margin: 0; } #web-notes-markdown-preview-content code { padding: 1px 4px; background: #e2e8f0; border-radius: 4px; } #web-notes-markdown-preview-content a { color: #2563eb; } #web-notes-markdown-preview-content img { display: block; max-width: 100%; max-height: 240px; margin: 7px 0; border-radius: 7px; object-fit: contain; } .web-notes-markdown-list { margin: 3px 0; } .web-notes-markdown-gap { height: 8px; }
+.web-notes-locate-target { outline: 4px solid #f59e0b !important; outline-offset: 4px !important; animation: web-notes-locate-pulse 1.6s ease-out; }
+@keyframes web-notes-locate-pulse { 0%, 45% { outline-color: #f59e0b; } 100% { outline-color: transparent; } }

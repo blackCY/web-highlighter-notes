@@ -1,4 +1,3 @@
-const STORAGE_PREFIX = "web-highlighter-notes:";
 const LEVELS = [
   { id: "important", label: "重要", color: "#fecaca" },
   { id: "idea", label: "想法", color: "#bbf7d0" },
@@ -15,53 +14,163 @@ let activeAnnotationId = null;
 let activeWeight = "normal";
 let pendingLevel = null;
 let pendingRange = null;
+let pendingAnnotationId = null;
+let toolbarRange = null;
+let contextMenuRange = null;
 let toastTimer;
+let mediaToolbarTimer;
+let cachedAnnotations = null;
+let restoreTimer;
+let noteActionQueue = Promise.resolve();
 const mediaBadges = new Map();
 const textNoteBadges = new Map();
 const textTypeBadges = new Map();
 
-const pageKey = () => `${STORAGE_PREFIX}${location.href.split("#")[0]}`;
+const pageUrl = () => {
+  const url = new URL(location.href);
+  url.hash = "";
+  url.search = "";
+  return url.href;
+};
+
+function pageFavicon() {
+  const icon = [...document.querySelectorAll('link[rel~="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]')]
+    .map((link) => link.href)
+    .find(Boolean);
+  return icon || new URL("/favicon.ico", location.href).href;
+}
 const createId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-function pathFor(node) {
-  const path = [];
-  let current = node;
-  while (current && current !== document.body) {
-    const parent = current.parentNode;
-    if (!parent) return null;
-    path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
-    current = parent;
-  }
-  return current ? path : null;
+function elementFor(node) {
+  return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
 }
 
-function nodeFor(path) {
-  return path?.reduce((node, index) => node?.childNodes[index], document.body) || null;
+function locatorFor(element) {
+  const idElement = element?.closest?.("[id]");
+  if (idElement?.id) return { type: "id", value: idElement.id };
+  const classElement = [element, ...(element?.parents || [])].find((candidate) => candidate?.classList?.length);
+  const classNames = classElement ? [...classElement.classList].filter((className) => !className.startsWith("web-notes-")) : [];
+  if (classElement && classNames.length) return { type: "class", tagName: classElement.tagName.toLowerCase(), classNames };
+  return { type: "tag", tagName: element?.tagName?.toLowerCase() || "body" };
+}
+
+function rootForRange(range) {
+  const commonElement = elementFor(range.commonAncestorContainer) || document.body;
+  return commonElement.closest("[id]") || [commonElement, ...commonElement.parents].find((element) => element.classList?.length) || commonElement;
+}
+
+function textOffset(root, container, offset) {
+  const range = document.createRange();
+  range.setStart(root, 0);
+  range.setEnd(container, offset);
+  return range.toString().length;
+}
+
+function contextForRange(range, root) {
+  const text = root.textContent || "";
+  const start = textOffset(root, range.startContainer, range.startOffset);
+  const end = textOffset(root, range.endContainer, range.endOffset);
+  return { start, end, prefix: text.slice(Math.max(0, start - 80), start), suffix: text.slice(end, end + 80) };
 }
 
 function selectorFor(range) {
+  const root = rootForRange(range);
+  const context = contextForRange(range, root);
+  const selectedText = (root.textContent || "").slice(context.start, context.end);
+  const leadingWhitespace = selectedText.match(/^\s*/)[0].length;
+  const trailingWhitespace = selectedText.match(/\s*$/)[0].length;
+  const start = context.start + leadingWhitespace;
+  const end = context.end - trailingWhitespace;
+  const text = root.textContent || "";
   return {
-    startPath: pathFor(range.startContainer), startOffset: range.startOffset,
-    endPath: pathFor(range.endContainer), endOffset: range.endOffset
+    anchor: locatorFor(root),
+    start,
+    end,
+    prefix: text.slice(Math.max(0, start - 80), start),
+    suffix: text.slice(end, end + 80),
+    order: [...document.querySelectorAll("*")].indexOf(root)
   };
 }
 
-function rangeFor(selector) {
-  const start = nodeFor(selector.startPath);
-  const end = nodeFor(selector.endPath);
-  if (!start || !end) return null;
-  try {
-    const range = document.createRange();
-    range.setStart(start, Math.min(selector.startOffset, start.nodeValue?.length ?? start.childNodes.length));
-    range.setEnd(end, Math.min(selector.endOffset, end.nodeValue?.length ?? end.childNodes.length));
-    return range;
-  } catch { return null; }
+function rootsForLocator(locator) {
+  if (!locator) return [];
+  if (locator.type === "id") {
+    const element = document.getElementById(locator.value);
+    return element ? [element] : [];
+  }
+  if (locator.type === "class" && locator.classNames?.length) {
+    return [...document.getElementsByClassName(locator.classNames[0])].filter((element) => (
+      (!locator.tagName || element.tagName.toLowerCase() === locator.tagName)
+      && locator.classNames.every((className) => element.classList.contains(className))
+    ));
+  }
+  return locator.tagName ? [...document.getElementsByTagName(locator.tagName)] : [];
+}
+
+function commonPrefixLength(left, right) {
+  const length = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < length && left[index] === right[index]) index += 1;
+  return index;
+}
+
+function commonSuffixLength(left, right) {
+  const length = Math.min(left.length, right.length);
+  let index = 0;
+  while (index < length && left[left.length - index - 1] === right[right.length - index - 1]) index += 1;
+  return index;
+}
+
+function bestTextMatch(text, expectedText, selector) {
+  const contextScore = (index) => {
+    const prefix = text.slice(Math.max(0, index - (selector.prefix || "").length), index);
+    const suffix = text.slice(index + expectedText.length, index + expectedText.length + (selector.suffix || "").length);
+    return commonSuffixLength(selector.prefix || "", prefix) + commonPrefixLength(selector.suffix || "", suffix);
+  };
+  const expectedContextLength = (selector.prefix || "").length + (selector.suffix || "").length;
+  if (text.slice(selector.start, selector.start + expectedText.length) === expectedText
+    && (!expectedContextLength || contextScore(selector.start) === expectedContextLength)) return selector.start;
+  const matches = [];
+  for (let index = text.indexOf(expectedText); index >= 0; index = text.indexOf(expectedText, index + 1)) matches.push(index);
+  if (!matches.length) return -1;
+  return matches.reduce((best, index) => {
+    const score = contextScore(index);
+    const distance = Math.abs(index - (selector.start || 0));
+    if (!best || score > best.score || (score === best.score && distance < best.distance)) return { index, score, distance };
+    return best;
+  }, null).index;
+}
+
+function textNodeAtOffset(root, textOffsetValue) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let remaining = textOffsetValue;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (remaining <= node.nodeValue.length) return { node, offset: remaining };
+    remaining -= node.nodeValue.length;
+  }
+  return null;
+}
+
+function rangeForText(root, selector, quote) {
+  const text = root.textContent || "";
+  const expectedText = quote || text.slice(selector.start, selector.end);
+  if (!expectedText) return null;
+  const start = bestTextMatch(text, expectedText, selector);
+  if (start < 0) return null;
+  const startPoint = textNodeAtOffset(root, start);
+  const endPoint = textNodeAtOffset(root, start + expectedText.length);
+  if (!startPoint || !endPoint) return null;
+  const range = document.createRange();
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
+  return range;
 }
 
 function textNodesIn(range) {
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      if (!node.nodeValue.trim() || node.parentElement?.closest("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-media-badges, #web-notes-text-note-badges, #web-notes-text-type-badges, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue.trim() || node.parentElement?.closest("script, style, noscript, template, textarea, input, select, option, [contenteditable], #web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar, #web-notes-media-badges, #web-notes-text-note-badges, #web-notes-text-type-badges, #web-notes-toast")) return NodeFilter.FILTER_REJECT;
       return range.intersectsNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }
   });
@@ -74,7 +183,7 @@ function applyHighlight(range, annotation) {
   for (const node of textNodesIn(range)) {
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : node.nodeValue.length;
-    if (start >= end || node.parentElement?.closest("mark.web-notes-highlight")) continue;
+    if (start >= end) continue;
     const piece = document.createRange();
     piece.setStart(node, start);
     piece.setEnd(node, end);
@@ -86,19 +195,48 @@ function applyHighlight(range, annotation) {
   }
 }
 
-async function annotations() {
-  const data = await chrome.storage.local.get(pageKey());
-  return data[pageKey()] || [];
+function highlightDuplicateRange(range) {
+  const selectedText = range.toString().trim();
+  return [...document.querySelectorAll("mark.web-notes-highlight")].find((mark) => (
+    range.intersectsNode(mark) && selectedText === mark.textContent.trim()
+  )) || null;
 }
 
-async function persist(items) {
-  await chrome.storage.local.set({ [pageKey()]: items });
+function sameAnnotationRange(left, right) {
+  if (!left || !right || left.quote !== right.quote) return false;
+  if (!(["text", "heading"].includes(left.type) && ["text", "heading"].includes(right.type))) return false;
+  const leftSelector = left.selector || {};
+  const rightSelector = right.selector || {};
+  return leftSelector.start === rightSelector.start
+    && leftSelector.end === rightSelector.end
+    && leftSelector.order === rightSelector.order
+    && JSON.stringify(leftSelector.anchor || null) === JSON.stringify(rightSelector.anchor || null);
+}
+
+async function annotations() {
+  if (cachedAnnotations) return cachedAnnotations;
+  const response = await githubNotesRequest("GET_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: document.title });
+  cachedAnnotations = response?.annotations || [];
+  return cachedAnnotations;
+}
+
+async function persist(items, changedAnnotations = [], deletedAnnotationIds = []) {
+  const notes = await githubNotesRequest("SAVE_GITHUB_NOTES", {
+    pageUrl: pageUrl(), pageTitle: document.title, pageFavicon: pageFavicon(), annotations: items, changedAnnotations, deletedAnnotationIds
+  });
+  cachedAnnotations = notes.annotations;
+  return cachedAnnotations;
+}
+
+async function githubNotesRequest(type, payload) {
+  const response = await chrome.runtime.sendMessage({ type, ...payload });
+  if (!response?.ok) throw new Error(response?.error || "GitHub 笔记请求失败");
+  return response.data;
 }
 
 async function save(annotation) {
   const items = await annotations();
-  items.push(annotation);
-  await persist(items);
+  await persist([...items, annotation], [annotation]);
 }
 
 function showToast(message) {
@@ -107,6 +245,111 @@ function showToast(message) {
   toast.classList.add("web-notes-toast-visible");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("web-notes-toast-visible"), 1800);
+}
+
+function hideMarkdownPreview() {
+  document.getElementById("web-notes-markdown-preview")?.setAttribute("hidden", "");
+}
+
+function escapePreviewHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+}
+
+function previewUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function renderMarkdownInline(value) {
+  const tokens = [];
+  const token = (html) => `@@WEB_NOTES_PREVIEW_${tokens.push(html) - 1}@@`;
+  let source = String(value || "");
+  source = source.replace(/<span style="([^"]+)">([\s\S]*?)<\/span>/g, (_match, style, content) => {
+    const safeStyle = /^[#\w\s:;(),.%+-]+$/.test(style) ? style : "";
+    return token(`<span${safeStyle ? ` style="${safeStyle}"` : ""}>${renderMarkdownInline(content)}</span>`);
+  });
+  source = source.replace(/!\[([^\]]*)\]\(([^\s)]+)\)/g, (_match, label, url) => {
+    const safeUrl = previewUrl(url);
+    return token(safeUrl ? `<img src="${escapePreviewHtml(safeUrl)}" alt="${escapePreviewHtml(label)}">` : escapePreviewHtml(label));
+  });
+  source = source.replace(/\[([^\]]+)\]\(([^\s)]+)\)/g, (_match, label, url) => {
+    const safeUrl = previewUrl(url);
+    return token(safeUrl ? `<a href="${escapePreviewHtml(safeUrl)}" target="_blank" rel="noreferrer">${escapePreviewHtml(label)}</a>` : escapePreviewHtml(label));
+  });
+  source = escapePreviewHtml(source)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\\([\\`*_[\]<>])/g, "$1");
+  return source.replace(/@@WEB_NOTES_PREVIEW_(\d+)@@/g, (_match, index) => tokens[Number(index)] || "");
+}
+
+function renderMarkdownPreview(markdown) {
+  return String(markdown || "").split(/\r?\n/).map((line) => {
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) return `<h${heading[1].length}>${renderMarkdownInline(heading[2])}</h${heading[1].length}>`;
+    const item = line.match(/^(\s*)-\s+(.+)$/);
+    if (item) return `<div class="web-notes-markdown-list" style="padding-left:${Math.min(48, item[1].length * 12)}px">• ${renderMarkdownInline(item[2])}</div>`;
+    if (!line.trim()) return "<div class=\"web-notes-markdown-gap\"></div>";
+    return `<p>${renderMarkdownInline(line)}</p>`;
+  }).join("");
+}
+
+function showMarkdownPreview(markdown) {
+  let preview = document.getElementById("web-notes-markdown-preview");
+  if (!preview) {
+    preview = document.createElement("aside");
+    preview.id = "web-notes-markdown-preview";
+    preview.setAttribute("aria-label", "Markdown 预览");
+    const header = document.createElement("header");
+    const title = document.createElement("strong");
+    title.textContent = "Markdown 预览";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "关闭";
+    close.addEventListener("click", hideMarkdownPreview);
+    const content = document.createElement("div");
+    content.id = "web-notes-markdown-preview-content";
+    header.append(title, close);
+    preview.append(header, content);
+    document.documentElement.append(preview);
+  }
+  preview.querySelector("#web-notes-markdown-preview-content").innerHTML = renderMarkdownPreview(markdown);
+  preview.hidden = false;
+}
+
+function locateAnnotation(annotationId) {
+  return annotations().then(async (items) => {
+    const annotation = items.find((item) => item.id === annotationId);
+    if (!annotation) return showToast("未找到此笔记");
+    let target = annotation.type === "media"
+      ? mediaForAnnotation(annotation)
+      : document.querySelector(`mark[data-web-notes-id="${annotation.id}"]`);
+    if (!target && annotation.type !== "media") {
+      await restore();
+      target = document.querySelector(`mark[data-web-notes-id="${annotation.id}"]`);
+    }
+    if (!target) return showToast("网页中暂时无法定位此笔记");
+    target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    target.classList.add("web-notes-locate-target");
+    setTimeout(() => target.classList.remove("web-notes-locate-target"), 1600);
+  });
+}
+
+function showNoteError(error) {
+  console.warn("Web Highlighter Notes 操作失败：", error);
+  if (/Extension context invalidated/i.test(error.message)) {
+    showToast("扩展已更新，请刷新当前网页后再操作");
+    return;
+  }
+  showToast(`笔记操作失败：${error.message}`);
+}
+
+function runNoteAction(action) {
+  noteActionQueue = noteActionQueue.catch(() => {}).then(action).catch(showNoteError);
 }
 
 function position(toolbar, x, y) {
@@ -121,14 +364,15 @@ function currentSelectionRange() {
 
 function applyMarkStyle(mark, annotation) {
   const isHeading = annotation.type === "heading";
-  mark.classList.toggle("web-notes-heading-highlight", isHeading);
+  mark.classList.remove("web-notes-heading-highlight");
   if (isHeading) {
-    const headingLevel = Math.max(1, Math.min(6, annotation.headingLevel || 1));
-    mark.dataset.webNotesHeading = headingLevel;
-    mark.style.backgroundColor = "transparent";
-    mark.style.fontWeight = "700";
+    delete mark.dataset.webNotesHeading;
+    mark.style.backgroundColor = "#c4b5fd";
+    mark.style.fontWeight = "inherit";
     mark.style.textDecorationLine = "none";
-    mark.style.fontSize = `${Math.max(1.05, 2 - headingLevel * 0.12)}em`;
+    mark.style.textDecorationThickness = "";
+    mark.style.textUnderlineOffset = "";
+    mark.style.fontSize = "inherit";
     return;
   }
   delete mark.dataset.webNotesHeading;
@@ -147,6 +391,24 @@ function applyAnnotationStyle(annotation) {
 function setDeleteAvailability(visible) {
   const button = document.getElementById("web-notes-delete");
   if (button) button.hidden = !visible;
+  const noteButton = document.getElementById("web-notes-add-note");
+  if (noteButton) noteButton.hidden = !visible;
+  if (!visible) hideDeleteConfirmation();
+}
+
+function hideDeleteConfirmation() {
+  const confirmation = document.getElementById("web-notes-delete-confirm");
+  if (confirmation) confirmation.hidden = true;
+}
+
+function showDeleteConfirmation() {
+  if (!activeAnnotationId) return;
+  const confirmation = document.getElementById("web-notes-delete-confirm");
+  const button = document.getElementById("web-notes-delete");
+  if (!confirmation || !button) return;
+  confirmation.hidden = false;
+  const bounds = button.getBoundingClientRect();
+  position(confirmation, bounds.right - confirmation.offsetWidth, bounds.top - confirmation.offsetHeight - 8);
 }
 
 function removeAnnotationMarks(annotationId) {
@@ -157,20 +419,22 @@ function removeAnnotationMarks(annotationId) {
 
 async function deleteActiveAnnotation() {
   if (!activeAnnotationId) return;
-  if (!confirm("确定删除这条笔记吗？此操作会移除网页标记和本地记录。")) return;
   const items = await annotations();
   const annotation = items.find((item) => item.id === activeAnnotationId);
   if (!annotation) return;
-  await persist(items.filter((item) => item.id !== activeAnnotationId));
-  removeAnnotationMarks(annotation.id);
+  const deletedAnnotationIds = items.filter((item) => sameAnnotationRange(item, annotation)).map((item) => item.id);
+  await persist(items.filter((item) => !deletedAnnotationIds.includes(item.id)), [], deletedAnnotationIds);
+  deletedAnnotationIds.forEach(removeAnnotationMarks);
   const updatedItems = await annotations();
   renderTextNoteBadges(updatedItems);
   renderTextTypeBadges(updatedItems);
   activeAnnotationId = null;
+  toolbarRange = null;
   window.getSelection()?.removeAllRanges();
+  hideDeleteConfirmation();
   setDeleteAvailability(false);
   document.getElementById("web-notes-toolbar").hidden = true;
-  showToast("已删除笔记");
+  showToast(deletedAnnotationIds.length > 1 ? "已删除重复笔记" : "已删除笔记");
 }
 
 function annotationBadgeTypes(annotation) {
@@ -289,7 +553,7 @@ function renderTextTypeBadges(items) {
 }
 
 function mediaForAnnotation(annotation) {
-  const savedElement = nodeFor(annotation.documentPath);
+  const savedElement = rootsForLocator(annotation.locator)[0];
   if (savedElement?.matches?.("img, video, audio")) return savedElement;
   return [...document.querySelectorAll("img, video, audio")].find((media) => {
     const source = media.currentSrc || media.src || media.getAttribute("src") || "";
@@ -312,36 +576,78 @@ function renderMediaBadges(items) {
   const container = document.getElementById("web-notes-media-badges");
   container.replaceChildren();
   mediaBadges.clear();
+  const badgesByMedia = new Map();
   items.filter((annotation) => annotation.type === "media").forEach((annotation) => {
     const media = mediaForAnnotation(annotation);
     if (!media) return;
+    const existing = badgesByMedia.get(media);
+    if (existing) {
+      mediaBadges.set(annotation.id, existing);
+      return;
+    }
     const badge = document.createElement("span");
     badge.className = "web-notes-media-badge";
     badge.textContent = "已记录";
     badge.title = "此媒体已保存为网页笔记";
     container.append(badge);
-    mediaBadges.set(annotation.id, { badge, media });
+    const entry = { badge, media };
+    badgesByMedia.set(media, entry);
+    mediaBadges.set(annotation.id, entry);
   });
   positionMediaBadges();
 }
 
+function mediaAnnotationsFor(media) {
+  const annotationIds = new Set([...mediaBadges.entries()]
+    .filter(([, entry]) => entry.media === media)
+    .map(([annotationId]) => annotationId));
+  return cachedAnnotations?.filter((annotation) => (
+    annotation.type === "media" && (annotationIds.has(annotation.id) || mediaForAnnotation(annotation) === media)
+  )) || [];
+}
+
 function hideMediaToolbar() {
+  clearTimeout(mediaToolbarTimer);
   selectedMedia?.classList.remove("web-notes-media-selected");
   selectedMedia = null;
   const toolbar = document.getElementById("web-notes-media-toolbar");
   if (toolbar) toolbar.hidden = true;
 }
 
+function showMediaToolbar(media) {
+  clearTimeout(mediaToolbarTimer);
+  selectedMedia?.classList.remove("web-notes-media-selected");
+  selectedMedia = media;
+  media.classList.add("web-notes-media-selected");
+  const toolbar = document.getElementById("web-notes-media-toolbar");
+  const button = document.getElementById("web-notes-media-action");
+  const annotations = mediaAnnotationsFor(media);
+  button.dataset.annotationIds = annotations.map((annotation) => annotation.id).join(",");
+  button.textContent = annotations.length ? "删除此媒体" : "记录此媒体";
+  button.classList.toggle("web-notes-media-delete", annotations.length > 0);
+  const bounds = media.getBoundingClientRect();
+  toolbar.hidden = false;
+  position(toolbar, bounds.left + 8, bounds.top + 8);
+}
+
+function scheduleHideMediaToolbar() {
+  clearTimeout(mediaToolbarTimer);
+  mediaToolbarTimer = setTimeout(hideMediaToolbar, 160);
+}
+
 async function highlightSelection(level, suppliedRange, note = null) {
-  const range = suppliedRange || currentSelectionRange();
+  const range = suppliedRange || toolbarRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
 
   const items = await annotations();
   const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
   const isPersonalNote = level.id === "idea" || level.id === "question";
+  if (existingIndex < 0 && highlightDuplicateRange(range)) {
+    return showToast("选中的文字已有笔记，请点击高亮后再修改");
+  }
   if (existingIndex >= 0) {
     const existing = items[existingIndex];
-    const notes = personalNotes(existing);
+    const notes = { ...personalNotes(existing) };
     if (isPersonalNote && note !== null) notes[level.id] = note;
     const isLegacyPersonalNote = !Object.hasOwn(existing, "personalNotes") && (existing.level === "idea" || existing.level === "question");
     const updated = {
@@ -349,11 +655,11 @@ async function highlightSelection(level, suppliedRange, note = null) {
       note: isPersonalNote && note !== null ? (isLegacyPersonalNote ? "" : existing.note) : (isLegacyPersonalNote ? "" : note ?? existing.note),
       badgeTypes: mergedBadgeTypes(existing, level.badgeType || level.id)
     };
-    items[existingIndex] = updated;
-    await persist(items);
+    await persist(items.map((item, index) => index === existingIndex ? updated : item), [updated]);
     applyAnnotationStyle(updated);
-    renderTextNoteBadges(items);
-    renderTextTypeBadges(items);
+    const savedItems = await annotations();
+    renderTextNoteBadges(savedItems);
+    renderTextTypeBadges(savedItems);
     showToast(`已更新为「${level.label}」标记`);
   } else {
     const annotation = {
@@ -362,34 +668,38 @@ async function highlightSelection(level, suppliedRange, note = null) {
       createdAt: new Date().toISOString(), note: isPersonalNote ? "" : note ?? "",
       personalNotes: isPersonalNote && note ? { [level.id]: note } : {}
     };
-    applyHighlight(range, annotation);
     await save(annotation);
+    applyHighlight(range, annotation);
     renderTextNoteBadges(await annotations());
     renderTextTypeBadges(await annotations());
     showToast(`已保存「${level.label}」标记`);
   }
 
   activeAnnotationId = null;
+  toolbarRange = null;
   window.getSelection()?.removeAllRanges();
   setDeleteAvailability(false);
   document.getElementById("web-notes-toolbar").hidden = true;
 }
 
-async function markHeading(headingLevel) {
-  const range = currentSelectionRange();
+async function markHeading(headingLevel, suppliedRange) {
+  const range = suppliedRange || toolbarRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记为标题的文字");
   const items = await annotations();
   const existingIndex = items.findIndex((item) => item.id === activeAnnotationId);
+  if (existingIndex < 0 && highlightDuplicateRange(range)) {
+    return showToast("选中的文字已有笔记，请点击高亮后再修改");
+  }
   if (existingIndex >= 0) {
     const updated = {
       ...items[existingIndex], type: "heading", headingLevel, level: "heading", color: "transparent",
       badgeTypes: mergedBadgeTypes(items[existingIndex], `h${headingLevel}`)
     };
-    items[existingIndex] = updated;
-    await persist(items);
+    await persist(items.map((item, index) => index === existingIndex ? updated : item), [updated]);
     applyAnnotationStyle(updated);
-    renderTextNoteBadges(items);
-    renderTextTypeBadges(items);
+    const savedItems = await annotations();
+    renderTextNoteBadges(savedItems);
+    renderTextTypeBadges(savedItems);
     showToast(`已标记为 H${headingLevel}`);
   } else {
     const annotation = {
@@ -397,14 +707,15 @@ async function markHeading(headingLevel) {
       badgeTypes: [`h${headingLevel}`], quote: range.toString().trim(), selector: selectorFor(range),
       createdAt: new Date().toISOString(), note: ""
     };
-    applyHighlight(range, annotation);
     await save(annotation);
+    applyHighlight(range, annotation);
     const savedItems = await annotations();
     renderTextNoteBadges(savedItems);
     renderTextTypeBadges(savedItems);
     showToast(`已标记为 H${headingLevel}`);
   }
   activeAnnotationId = null;
+  toolbarRange = null;
   window.getSelection()?.removeAllRanges();
   document.getElementById("web-notes-toolbar").hidden = true;
 }
@@ -413,14 +724,16 @@ function closeNoteEditor() {
   document.getElementById("web-notes-note-editor").hidden = true;
   pendingLevel = null;
   pendingRange = null;
+  pendingAnnotationId = null;
 }
 
-async function openNoteEditor(level) {
-  const range = currentSelectionRange();
+async function openNoteEditor(level, suppliedRange) {
+  const range = suppliedRange || toolbarRange || currentSelectionRange();
   if (!range || !range.toString().trim()) return showToast("请先选择要标记的文字");
   const existing = (await annotations()).find((item) => item.id === activeAnnotationId);
   pendingLevel = level;
   pendingRange = range;
+  pendingAnnotationId = null;
   const editor = document.getElementById("web-notes-note-editor");
   editor.querySelector("strong").textContent = level.id === "idea" ? "我的想法" : "我的疑问";
   const input = editor.querySelector("textarea");
@@ -430,6 +743,34 @@ async function openNoteEditor(level) {
   const toolbarBounds = document.getElementById("web-notes-toolbar").getBoundingClientRect();
   position(editor, toolbarBounds.left, toolbarBounds.top - editor.offsetHeight - 10);
   input.focus();
+}
+
+async function openAnnotationNoteEditor() {
+  if (!activeAnnotationId) return;
+  const annotation = (await annotations()).find((item) => item.id === activeAnnotationId);
+  if (!annotation) return;
+  pendingLevel = null;
+  pendingRange = null;
+  pendingAnnotationId = annotation.id;
+  const editor = document.getElementById("web-notes-note-editor");
+  editor.querySelector("strong").textContent = "我的备注";
+  const input = editor.querySelector("textarea");
+  input.placeholder = "写下你的备注…";
+  input.value = annotation.note || "";
+  editor.hidden = false;
+  const toolbarBounds = document.getElementById("web-notes-toolbar").getBoundingClientRect();
+  position(editor, toolbarBounds.left, toolbarBounds.top - editor.offsetHeight - 10);
+  input.focus();
+}
+
+async function updateAnnotationNote(annotationId, note) {
+  const items = await annotations();
+  const index = items.findIndex((item) => item.id === annotationId);
+  if (index < 0) return;
+  const updated = { ...items[index], note };
+  await persist(items.map((item, itemIndex) => itemIndex === index ? updated : item), [updated]);
+  renderTextNoteBadges(await annotations());
+  showToast(note ? "已保存备注" : "已清除备注");
 }
 
 async function setWeight(weight, updateActiveAnnotation = true) {
@@ -442,17 +783,18 @@ async function setWeight(weight, updateActiveAnnotation = true) {
   const index = items.findIndex((item) => item.id === activeAnnotationId);
   if (index < 0) return;
   items[index] = { ...items[index], weight, badgeTypes: mergedBadgeTypes(items[index], weight) };
-  await persist(items);
+  await persist(items, [items[index]]);
   applyAnnotationStyle(items[index]);
   renderTextTypeBadges(items);
   showToast(weight === "bold" ? "已设为加粗" : "已恢复默认字重");
 }
 
-async function recordWithWeight(weight) {
-  const range = currentSelectionRange();
+async function recordWithWeight(weight, suppliedRange) {
+  const range = suppliedRange || toolbarRange || currentSelectionRange();
   await setWeight(weight);
   if (activeAnnotationId) {
     activeAnnotationId = null;
+    toolbarRange = null;
     window.getSelection()?.removeAllRanges();
     setDeleteAvailability(false);
     document.getElementById("web-notes-toolbar").hidden = true;
@@ -469,8 +811,10 @@ function levelButton(level, className = "web-notes-level") {
   button.style.background = level.color;
   button.addEventListener("mousedown", (event) => {
     event.preventDefault();
-    if (level.id === "idea" || level.id === "question") openNoteEditor(level);
-    else highlightSelection(level);
+    const range = toolbarRange;
+    runNoteAction(() => (level.id === "idea" || level.id === "question")
+      ? openNoteEditor(level, range)
+      : highlightSelection(level, range));
   });
   return button;
 }
@@ -493,7 +837,8 @@ function buildUi() {
     button.setAttribute("aria-label", `${choice.label}重要标记`);
     button.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      highlightSelection({ id: "important", label: "重要", color: choice.color });
+      const range = toolbarRange;
+      runNoteAction(() => highlightSelection({ id: "important", label: "重要", color: choice.color }, range));
     });
     colorMenu.append(button);
   });
@@ -507,14 +852,22 @@ function buildUi() {
   const headingButton = document.createElement("button");
   headingButton.className = "web-notes-level web-notes-heading-trigger";
   headingButton.textContent = "标题";
-  headingButton.addEventListener("mousedown", (event) => { event.preventDefault(); markHeading(1); });
+  headingButton.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    const range = toolbarRange;
+    runNoteAction(() => markHeading(1, range));
+  });
   const headingMenu = document.createElement("div");
   headingMenu.className = "web-notes-heading-menu";
   HEADING_LEVELS.forEach((headingLevel) => {
     const button = document.createElement("button");
     button.className = "web-notes-heading-choice";
     button.textContent = `H${headingLevel}`;
-    button.addEventListener("mousedown", (event) => { event.preventDefault(); markHeading(headingLevel); });
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const range = toolbarRange;
+      runNoteAction(() => markHeading(headingLevel, range));
+    });
     headingMenu.append(button);
   });
   headingGroup.append(headingButton, headingMenu);
@@ -531,18 +884,54 @@ function buildUi() {
     button.className = "web-notes-weight";
     button.dataset.weight = weight.id;
     button.textContent = weight.label;
-    button.addEventListener("mousedown", (event) => { event.preventDefault(); recordWithWeight(weight.id); });
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      const range = toolbarRange;
+      runNoteAction(() => recordWithWeight(weight.id, range));
+    });
     toolbar.append(button);
   });
+  const addNoteButton = document.createElement("button");
+  addNoteButton.id = "web-notes-add-note";
+  addNoteButton.className = "web-notes-weight";
+  addNoteButton.textContent = "备注";
+  addNoteButton.hidden = true;
+  addNoteButton.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    runNoteAction(openAnnotationNoteEditor);
+  });
+  toolbar.append(addNoteButton);
   const deleteButton = document.createElement("button");
   deleteButton.id = "web-notes-delete";
   deleteButton.className = "web-notes-delete";
   deleteButton.textContent = "删除笔记";
   deleteButton.hidden = true;
-  deleteButton.addEventListener("mousedown", (event) => { event.preventDefault(); deleteActiveAnnotation(); });
+  deleteButton.addEventListener("mousedown", (event) => { event.preventDefault(); });
+  deleteButton.addEventListener("click", showDeleteConfirmation);
   toolbar.append(deleteButton);
   document.documentElement.append(toolbar);
   setWeight(activeWeight);
+
+  const deleteConfirmation = document.createElement("div");
+  deleteConfirmation.id = "web-notes-delete-confirm";
+  deleteConfirmation.hidden = true;
+  const deleteMessage = document.createElement("span");
+  deleteMessage.textContent = "删除此笔记？";
+  const deleteCancel = document.createElement("button");
+  deleteCancel.className = "web-notes-delete-cancel";
+  deleteCancel.textContent = "取消";
+  deleteCancel.addEventListener("mousedown", (event) => { event.preventDefault(); });
+  deleteCancel.addEventListener("click", hideDeleteConfirmation);
+  const deleteConfirm = document.createElement("button");
+  deleteConfirm.className = "web-notes-delete-confirm-action";
+  deleteConfirm.textContent = "确认删除";
+  deleteConfirm.addEventListener("mousedown", (event) => { event.preventDefault(); });
+  deleteConfirm.addEventListener("click", () => {
+    hideDeleteConfirmation();
+    runNoteAction(deleteActiveAnnotation);
+  });
+  deleteConfirmation.append(deleteMessage, deleteCancel, deleteConfirm);
+  document.documentElement.append(deleteConfirmation);
 
   const noteEditor = document.createElement("div");
   noteEditor.id = "web-notes-note-editor";
@@ -560,14 +949,29 @@ function buildUi() {
   const confirm = document.createElement("button");
   confirm.className = "web-notes-note-confirm";
   confirm.textContent = "保存笔记";
-  confirm.addEventListener("mousedown", async (event) => {
-    event.preventDefault();
+  const savePendingNote = () => {
+    const annotationId = pendingAnnotationId;
+    if (annotationId) {
+      const note = input.value.trim();
+      closeNoteEditor();
+      runNoteAction(() => updateAnnotationNote(annotationId, note));
+      return;
+    }
     if (!pendingLevel || !pendingRange) return;
     const level = pendingLevel;
     const range = pendingRange;
     const note = input.value.trim();
     closeNoteEditor();
-    await highlightSelection(level, range, note);
+    runNoteAction(() => highlightSelection(level, range, note));
+  };
+  confirm.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    savePendingNote();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return;
+    event.preventDefault();
+    savePendingNote();
   });
   actions.append(cancel, confirm);
   noteEditor.append(title, input, actions);
@@ -577,21 +981,37 @@ function buildUi() {
   mediaToolbar.id = "web-notes-media-toolbar";
   mediaToolbar.hidden = true;
   const mediaButton = document.createElement("button");
+  mediaButton.id = "web-notes-media-action";
   mediaButton.className = "web-notes-media-button";
   mediaButton.textContent = "记录此媒体";
-  mediaButton.addEventListener("click", async () => {
+  mediaButton.addEventListener("click", () => runNoteAction(async () => {
     if (!selectedMedia) return;
+    const existingAnnotationIds = new Set(mediaButton.dataset.annotationIds.split(",").filter(Boolean));
+    if (existingAnnotationIds.size) {
+      const items = await annotations();
+      const deletedAnnotationIds = items.filter((item) => existingAnnotationIds.has(item.id)).map((item) => item.id);
+      if (!deletedAnnotationIds.length) return hideMediaToolbar();
+      await persist(items.filter((item) => !existingAnnotationIds.has(item.id)), [], deletedAnnotationIds);
+      await renderMediaBadges(await annotations());
+      hideMediaToolbar();
+      showToast(deletedAnnotationIds.length > 1 ? "已删除重复媒体记录" : "已删除媒体记录");
+      return;
+    }
+    if (mediaAnnotationsFor(selectedMedia).length) {
+      showMediaToolbar(selectedMedia);
+      return showToast("此媒体已记录");
+    }
     const source = selectedMedia.currentSrc || selectedMedia.src || selectedMedia.getAttribute("src") || "";
     const annotation = {
       id: createId(), type: "media", mediaType: selectedMedia.tagName.toLowerCase(), source,
       label: selectedMedia.alt || selectedMedia.getAttribute("aria-label") || selectedMedia.title || "媒体内容",
-      documentPath: pathFor(selectedMedia), createdAt: new Date().toISOString(), note: ""
+      locator: locatorFor(selectedMedia), createdAt: new Date().toISOString(), note: ""
     };
     await save(annotation);
     await renderMediaBadges(await annotations());
     hideMediaToolbar();
     showToast("已保存媒体记录");
-  });
+  }));
   mediaToolbar.append(mediaButton);
   document.documentElement.append(mediaToolbar);
 
@@ -616,29 +1036,57 @@ async function restore() {
   const items = await annotations();
   for (const annotation of items) {
     if (annotation.type !== "text" && annotation.type !== "heading") continue;
-    const range = rangeFor(annotation.selector);
-    if (range && range.toString().trim() === annotation.quote) applyHighlight(range, annotation);
+    if (document.querySelector(`mark[data-web-notes-id="${annotation.id}"]`)) continue;
+    const roots = rootsForLocator(annotation.selector?.anchor);
+    if (!roots.includes(document.body)) roots.push(document.body);
+    const range = roots
+      .map((root) => rangeForText(root, annotation.selector, annotation.quote))
+      .find(Boolean);
+    if (range) applyHighlight(range, annotation);
   }
   renderTextNoteBadges(items);
   renderTextTypeBadges(items);
   renderMediaBadges(items);
 }
 
+function scheduleRestore(mutations) {
+  if (!cachedAnnotations?.some((annotation) => (
+    ((annotation.type === "text" || annotation.type === "heading") && !document.querySelector(`mark[data-web-notes-id="${annotation.id}"]`))
+    || (annotation.type === "media" && !mediaBadges.has(annotation.id))
+  ))) return;
+  const hasPageContentChange = mutations.some((mutation) => [...mutation.addedNodes].some((node) => {
+    const element = elementFor(node);
+    return !element?.closest?.("[id^='web-notes-']") && Boolean(node.nodeType === Node.TEXT_NODE ? node.nodeValue?.trim() : element?.textContent?.trim() || element?.matches?.("img, video, audio"));
+  }));
+  if (!hasPageContentChange) return;
+  clearTimeout(restoreTimer);
+  restoreTimer = setTimeout(() => {
+    restore().catch((error) => console.warn("Web Highlighter Notes 恢复失败：", error));
+  }, 300);
+}
+
 document.addEventListener("mouseup", (event) => {
   const range = currentSelectionRange();
   const toolbar = document.getElementById("web-notes-toolbar");
-  if (event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor")) return;
+  if (event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor, #web-notes-delete-confirm")) return;
   if (!event.target.closest?.("#web-notes-media-toolbar, img, video, audio")) hideMediaToolbar();
-  if (!range) return (toolbar.hidden = true);
+  if (!range || event.detail > 1) {
+    toolbarRange = null;
+    return (toolbar.hidden = true);
+  }
   closeNoteEditor();
   activeAnnotationId = null;
+  toolbarRange = range;
   setDeleteAvailability(false);
   toolbar.hidden = false;
   position(toolbar, event.clientX, event.clientY + 14);
 });
 
-document.addEventListener("click", async (event) => {
-  if (!event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor")) closeNoteEditor();
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor, #web-notes-delete-confirm")) {
+    closeNoteEditor();
+    hideDeleteConfirmation();
+  }
   const mark = event.target.closest?.("mark.web-notes-highlight");
   if (mark) {
     const range = document.createRange();
@@ -646,29 +1094,48 @@ document.addEventListener("click", async (event) => {
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
+    toolbarRange = range.cloneRange();
     activeAnnotationId = mark.dataset.webNotesId;
     setDeleteAvailability(true);
-    const annotation = (await annotations()).find((item) => item.id === activeAnnotationId);
-    await setWeight(annotation?.weight || "normal", false);
-    const toolbar = document.getElementById("web-notes-toolbar");
-    toolbar.hidden = false;
-    position(toolbar, event.clientX, event.clientY + 14);
+    runNoteAction(async () => {
+      const annotation = (await annotations()).find((item) => item.id === activeAnnotationId);
+      await setWeight(annotation?.weight || "normal", false);
+      const toolbar = document.getElementById("web-notes-toolbar");
+      toolbar.hidden = false;
+      position(toolbar, event.clientX, event.clientY + 14);
+    });
     return;
   }
 
   if (event.target.closest?.("#web-notes-media-toolbar")) return;
-  const media = event.target.closest?.("img, video, audio");
-  if (!media) {
-    hideMediaToolbar();
-    return;
-  }
-  selectedMedia?.classList.remove("web-notes-media-selected");
-  selectedMedia = media;
-  media.classList.add("web-notes-media-selected");
-  const toolbar = document.getElementById("web-notes-media-toolbar");
-  toolbar.hidden = false;
-  position(toolbar, event.clientX + 12, event.clientY + 12);
+  if (!event.target.closest?.("img, video, audio")) hideMediaToolbar();
 }, true);
+
+document.addEventListener("dblclick", (event) => {
+  if (event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor")) return;
+  toolbarRange = null;
+  closeNoteEditor();
+  setDeleteAvailability(false);
+  document.getElementById("web-notes-toolbar").hidden = true;
+});
+
+document.addEventListener("contextmenu", (event) => {
+  if (event.target.closest?.("#web-notes-toolbar, #web-notes-note-editor, #web-notes-media-toolbar")) return;
+  contextMenuRange = currentSelectionRange();
+});
+
+document.addEventListener("mouseover", (event) => {
+  if (event.buttons) return;
+  const media = event.target.closest?.("img, video, audio");
+  if (!media || media === selectedMedia) return;
+  showMediaToolbar(media);
+});
+
+document.addEventListener("mouseout", (event) => {
+  if (!event.target.closest?.("img, video, audio, #web-notes-media-toolbar")) return;
+  if (event.relatedTarget?.closest?.("img, video, audio, #web-notes-media-toolbar")) return;
+  scheduleHideMediaToolbar();
+});
 
 window.addEventListener("scroll", () => {
   positionMediaBadges();
@@ -682,23 +1149,35 @@ window.addEventListener("resize", () => {
   positionTextTypeBadges();
 });
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") hideMediaToolbar();
+  if (event.key === "Escape") {
+    hideMediaToolbar();
+    hideDeleteConfirmation();
+    hideMarkdownPreview();
+  }
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "UPDATE_ANNOTATION_NOTE") {
-    (async () => {
-      const items = await annotations();
-      const index = items.findIndex((item) => item.id === message.annotationId);
-      if (index < 0) return;
-      items[index] = { ...items[index], note: String(message.note || "") };
-      await persist(items);
-      renderTextNoteBadges(items);
-    })();
+  if (message.type === "SHOW_MARKDOWN_PREVIEW") {
+    showMarkdownPreview(message.markdown);
     return;
   }
-  if (message.type === "HIGHLIGHT_SELECTION") highlightSelection(message.level);
+  if (message.type === "LOCATE_ANNOTATION") {
+    runNoteAction(() => locateAnnotation(message.annotationId));
+    return;
+  }
+  if (message.type === "HIGHLIGHT_SELECTION") {
+    const range = contextMenuRange || currentSelectionRange();
+    contextMenuRange = null;
+    if (message.level.weight) activeWeight = message.level.weight;
+    runNoteAction(() => {
+      if (message.level.id === "heading") return markHeading(message.level.headingLevel || 1, range);
+      return message.level.id === "idea" || message.level.id === "question"
+        ? openNoteEditor(message.level, range)
+        : highlightSelection(message.level, range);
+    });
+  }
 });
 
 buildUi();
-restore();
+restore().catch((error) => console.warn("Web Highlighter Notes 初始恢复失败：", error));
+new MutationObserver(scheduleRestore).observe(document.documentElement, { childList: true, subtree: true });

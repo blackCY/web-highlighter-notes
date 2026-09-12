@@ -2,10 +2,11 @@
 <html lang="zh-CN">
   <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"></head>
   <body>
-    <header><div class="header-row"><h1>网页笔记</h1><button id="directory-toggle" class="header-action">保存目录</button></div><p id="page-title">正在读取当前页面…</p></header>
-    <section id="export-settings" hidden><label for="export-directory">Markdown 保存目录</label><input id="export-directory" type="text" placeholder="/Users/你的用户名/Documents/notes"><p id="directory-status"></p><div><button id="choose-directory" class="secondary">选择文件夹</button><button id="save-directory">保存目录</button></div></section>
-    <main><div id="empty">这个页面还没有记录。</div><div id="notes"></div></main>
-    <footer><button id="export">导出 Markdown</button><button id="clear" class="secondary">清除此页记录</button></footer>
+    <header><div class="header-row"><h1>网页笔记</h1><div class="header-actions"><button id="github-toggle" class="header-action">GitHub</button></div></div><p id="page-title">正在读取当前页面…</p></header>
+    <section id="github-settings" hidden><label for="github-repository">GitHub 仓库</label><input id="github-repository" type="text" placeholder="owner/repository"><label for="github-branch">分支</label><input id="github-branch" type="text" placeholder="main"><label for="github-directory">笔记目录</label><input id="github-directory" type="text" placeholder="notes"><label for="github-token">Fine-grained Token</label><div class="token-field"><input id="github-token" type="password" placeholder="github_pat_…" autocomplete="off"><button id="toggle-github-token" class="token-action secondary" type="button" aria-pressed="false">显示</button><button id="copy-github-token" class="token-action secondary" type="button">复制</button></div><p id="github-status"></p><button id="save-github">保存 GitHub 配置</button></section>
+    <main><input id="filter" type="search" placeholder="筛选本页笔记…" aria-label="筛选本页笔记"><div id="empty">这个页面还没有记录。</div><div id="notes"></div></main>
+    <footer><button id="sync" class="secondary">从 GitHub 刷新</button><button id="export">导出 Markdown</button><button id="force-delete" class="danger">强制删除</button><button id="preview-markdown" class="secondary">预览 Markdown</button></footer>
+    <section id="force-delete-confirm" hidden><p>将从 GitHub 永久删除本页的所有笔记文件，无法恢复。</p><div><button id="cancel-force-delete" class="secondary">取消</button><button id="confirm-force-delete" class="danger">再次确认删除</button></div></section>
     <script src="popup.js"></script>
   </body>
 </html>

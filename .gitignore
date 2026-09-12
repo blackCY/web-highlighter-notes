@@ -1,5 +1,0 @@
-.exporter.log
-.exporter.pid
-.exporter-config.json
-exports/*.md
-!exports/.gitkeep

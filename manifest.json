@@ -3,8 +3,8 @@
   "name": "Web Highlighter Notes",
   "version": "1.0.0",
   "description": "Highlight web content, save media references, and export notes as Markdown.",
-  "permissions": ["storage", "activeTab", "contextMenus"],
-  "host_permissions": ["http://127.0.0.1:3517/*"],
+  "permissions": ["storage", "activeTab", "contextMenus", "downloads"],
+  "host_permissions": ["https://api.github.com/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "Web Highlighter Notes" },
   "content_scripts": [

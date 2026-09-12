@@ -1,9 +1,10 @@
-const STORAGE_PREFIX = "web-highlighter-notes:";
 const LEVEL_LABELS = { important: "重要", idea: "想法", question: "疑问", note: "笔记", heading: "标题" };
+const GITHUB_SETTINGS_KEY = "web-highlighter-notes-github-settings";
+const DEFAULT_GITHUB_SETTINGS = { repository: "blackCY/web-highlighter-notes", branch: "main", directory: "notes", token: "" };
 let currentTab;
-let currentKey;
 let pageAnnotations = [];
-const exporterUrl = "http://127.0.0.1:3517";
+let filterQuery = "";
+let loadError = "";
 
 const escapeHtml = (text) => String(text).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 const escapeMarkdown = (text) => String(text).replace(/[\\`*_[\]<>]/g, "\\$&");
@@ -17,28 +18,37 @@ function mediaMarkdown(annotation) {
 }
 
 function annotationPosition(annotation) {
+  if (Number.isInteger(annotation.selector?.order)) return [annotation.selector.order, annotation.selector.start || 0];
   const path = annotation.selector?.startPath || annotation.documentPath;
   if (!path) return null;
   return [...path, annotation.selector?.startOffset || 0];
 }
 
-function annotationsInPageOrder() {
-  return [...pageAnnotations].sort((left, right) => {
-    const leftPosition = annotationPosition(left);
-    const rightPosition = annotationPosition(right);
-    if (leftPosition && rightPosition) {
-      const length = Math.max(leftPosition.length, rightPosition.length);
-      for (let index = 0; index < length; index += 1) {
-        const difference = (leftPosition[index] ?? -1) - (rightPosition[index] ?? -1);
-        if (difference) return difference;
-      }
-    } else if (leftPosition) {
-      return -1;
-    } else if (rightPosition) {
-      return 1;
+function compareAnnotationsInPageOrder(left, right) {
+  const leftPosition = annotationPosition(left);
+  const rightPosition = annotationPosition(right);
+  if (leftPosition && rightPosition) {
+    const length = Math.max(leftPosition.length, rightPosition.length);
+    for (let index = 0; index < length; index += 1) {
+      const difference = (leftPosition[index] ?? -1) - (rightPosition[index] ?? -1);
+      if (difference) return difference;
     }
-    return new Date(left.createdAt) - new Date(right.createdAt);
-  });
+  } else if (leftPosition) {
+    return -1;
+  } else if (rightPosition) {
+    return 1;
+  }
+  return new Date(left.createdAt) - new Date(right.createdAt);
+}
+
+function orderedAnnotationEntries() {
+  return pageAnnotations
+    .map((annotation, index) => ({ annotation, index }))
+    .sort((left, right) => compareAnnotationsInPageOrder(left.annotation, right.annotation));
+}
+
+function annotationsInPageOrder() {
+  return orderedAnnotationEntries().map(({ annotation }) => annotation);
 }
 
 function textMarkdown(annotation) {
@@ -69,6 +79,13 @@ function personalNotes(annotation) {
   return {};
 }
 
+function annotationSearchText(annotation) {
+  return [annotation.quote, annotation.label, annotation.source, annotation.note, ...Object.values(personalNotes(annotation))]
+    .filter(Boolean)
+    .join("\n")
+    .toLocaleLowerCase();
+}
+
 function annotationNoteMarkdown(annotation) {
   const notes = personalNotes(annotation);
   const children = [];
@@ -79,89 +96,57 @@ function annotationNoteMarkdown(annotation) {
   return children;
 }
 
-async function save() { await chrome.storage.local.set({ [currentKey]: pageAnnotations }); }
+function pageUrl() {
+  const url = new URL(currentTab.url);
+  url.hash = "";
+  url.search = "";
+  return url.href;
+}
+
+async function githubNotesRequest(type, payload) {
+  const response = await chrome.runtime.sendMessage({ type, ...payload });
+  if (!response?.ok) throw new Error(response?.error || "GitHub 笔记请求失败");
+  return response.data;
+}
 
 async function exportMarkdown() {
-  return exporterRequest("/export", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename: exportFilename(), content: markdown(), pageUrl: currentTab.url })
-  });
+  return githubNotesRequest("DOWNLOAD_MARKDOWN", { filename: exportFilename(), content: markdown() });
 }
 
-async function refreshPageAnnotation(annotation) {
-  try {
-    await chrome.tabs.sendMessage(currentTab.id, {
-      type: "UPDATE_ANNOTATION_NOTE",
-      annotationId: annotation.id,
-      note: annotation.note
-    });
-  } catch { /* The popup can still save and export if the target page cannot receive messages. */ }
+async function loadGithubSettings() {
+  const stored = await chrome.storage.local.get(GITHUB_SETTINGS_KEY);
+  const settings = { ...DEFAULT_GITHUB_SETTINGS, ...(stored[GITHUB_SETTINGS_KEY] || {}) };
+  document.getElementById("github-repository").value = settings.repository;
+  document.getElementById("github-branch").value = settings.branch;
+  document.getElementById("github-directory").value = settings.directory;
+  document.getElementById("github-token").value = settings.token;
+  document.getElementById("github-status").textContent = settings.token ? "GitHub 笔记同步已配置。" : "请粘贴仅授权此仓库 Contents 读写权限的 Token。";
 }
 
-async function exporterRequest(path, options = {}) {
-  const response = await fetch(`${exporterUrl}${path}`, options);
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "本地导出服务请求失败");
-  return result;
-}
-
-function directoryError(error) {
-  return `无法连接本地导出服务：${error.message}`;
-}
-
-async function loadExportSettings() {
-  const status = document.getElementById("directory-status");
-  status.textContent = "正在读取保存目录…";
-  try {
-    const result = await exporterRequest("/settings");
-    document.getElementById("export-directory").value = result.directory;
-    status.textContent = result.directory === result.defaultDirectory ? "当前使用项目默认 exports 目录" : "当前使用自定义目录";
-  } catch (error) {
-    status.textContent = directoryError(error);
-  }
+function githubStatus(message) {
+  document.getElementById("github-status").textContent = message;
 }
 
 function render() {
-  document.getElementById("empty").hidden = pageAnnotations.length > 0;
-  document.getElementById("notes").innerHTML = pageAnnotations.map((annotation, index) => {
+  const normalizedQuery = filterQuery.trim().toLocaleLowerCase();
+  const visibleAnnotations = orderedAnnotationEntries()
+    .filter(({ annotation }) => !normalizedQuery || annotationSearchText(annotation).includes(normalizedQuery));
+  const empty = document.getElementById("empty");
+  empty.hidden = visibleAnnotations.length > 0;
+  empty.textContent = loadError || (pageAnnotations.length && normalizedQuery ? "没有匹配的笔记。" : "这个页面还没有记录。");
+  document.getElementById("notes").innerHTML = visibleAnnotations.map(({ annotation, index }) => {
     const date = new Date(annotation.createdAt).toLocaleString("zh-CN", { dateStyle: "short", timeStyle: "short" });
     const source = annotation.type === "media" ? `<a class="media" href="${escapeHtml(annotation.source)}" target="_blank">${escapeHtml(annotation.label || annotation.mediaType)}</a>` : escapeHtml(annotation.quote);
     const tag = annotation.type === "media" ? "媒体" : annotation.type === "heading" ? `H${annotation.headingLevel}` : `${LEVEL_LABELS[annotation.level] || "标记"}${annotation.weight === "bold" ? " · 加粗" : ""}`;
-    const actionLabel = annotation.note ? "更新笔记" : "添加笔记";
-    return `<article class="entry"><div class="meta"><span class="tag" style="background:${annotation.color || "#e2e8f0"}">${tag}</span><time>${date}</time></div><div class="quote">${source}</div><textarea class="note" data-index="${index}" placeholder="添加自己的笔记…">${escapeHtml(annotation.note || "")}</textarea><div class="note-actions"><span class="note-status" data-status-index="${index}"></span><button class="note-save" data-index="${index}">${actionLabel}</button></div></article>`;
+    return `<article class="entry"><div class="meta"><span class="tag" style="background:${annotation.color || "#e2e8f0"}">${tag}</span><time>${date}</time><button class="locate-note" data-annotation-id="${escapeHtml(annotation.id)}" type="button">定位</button></div><div class="quote">${source}</div></article>`;
   }).join("");
-  document.querySelectorAll("textarea.note").forEach((input) => input.addEventListener("input", () => {
-    const button = document.querySelector(`.note-save[data-index="${input.dataset.index}"]`);
-    button.textContent = input.value.trim() ? "更新笔记" : "添加笔记";
-  }));
-  document.querySelectorAll("button.note-save").forEach((button) => button.addEventListener("click", async () => {
-    const index = Number(button.dataset.index);
-    const input = document.querySelector(`textarea.note[data-index="${index}"]`);
-    const status = document.querySelector(`.note-status[data-status-index="${index}"]`);
-    const annotation = pageAnnotations[index];
-    button.disabled = true;
-    status.textContent = "正在保存…";
-    annotation.note = input.value.trim();
-    try {
-      await save();
-      await refreshPageAnnotation(annotation);
-      const result = await exportMarkdown();
-      button.textContent = annotation.note ? "更新笔记" : "添加笔记";
-      status.textContent = `${result.action === "updated" ? "已更新" : "已导出"} Markdown`;
-    } catch (error) {
-      status.textContent = `笔记已保存，Markdown 未同步：${error.message}`;
-    } finally {
-      button.disabled = false;
-    }
-  }));
 }
 
 function markdown() {
   const title = currentTab.title || "未命名网页";
   const orderedAnnotations = annotationsInPageOrder();
   const hasHeadings = orderedAnnotations.some((annotation) => annotation.type === "heading");
-  const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${currentTab.url}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, ""];
+  const lines = [`# ${escapeMarkdown(title)}`, "", `- 原文标题：${escapeMarkdown(title)}`, `- 原文网址：${pageUrl()}`, `- 导出时间：${new Date().toLocaleString("zh-CN")}`, ""];
   if (!hasHeadings) lines.push("## 标记与笔记", "");
   if (!pageAnnotations.length) lines.push("暂无记录。");
   orderedAnnotations.forEach((annotation) => {
@@ -188,60 +173,172 @@ function exportFilename() {
 }
 
 document.getElementById("export").addEventListener("click", async () => {
+  const button = document.getElementById("export");
+  button.disabled = true;
   try {
-    const result = await exportMarkdown();
-    alert(`${result.action === "updated" ? "已更新" : "已新增"}保存目录中的笔记：${result.filename}`);
+    await exportMarkdown();
+    button.textContent = "已下载";
+    setTimeout(() => { button.textContent = "导出 Markdown"; }, 1600);
   } catch (error) {
-    alert(`无法导出到项目目录。请先在项目根目录运行 npm run exporter。\n\n${error.message}`);
+    alert(`无法下载 Markdown。\n\n${error.message}`);
+  } finally {
+    button.disabled = false;
   }
 });
 
-document.getElementById("directory-toggle").addEventListener("click", async () => {
-  const settings = document.getElementById("export-settings");
+document.getElementById("preview-markdown").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await chrome.tabs.sendMessage(currentTab.id, { type: "SHOW_MARKDOWN_PREVIEW", markdown: markdown() });
+  } catch (error) {
+    alert(`无法打开 Markdown 预览。\n\n${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById("notes").addEventListener("click", async (event) => {
+  const button = event.target.closest(".locate-note");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await chrome.tabs.sendMessage(currentTab.id, { type: "LOCATE_ANNOTATION", annotationId: button.dataset.annotationId });
+  } catch (error) {
+    alert(`无法定位笔记。\n\n${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById("sync").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "正在刷新…";
+  try {
+    const notes = await githubNotesRequest("GET_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: currentTab.title });
+    pageAnnotations = notes?.annotations || [];
+    loadError = "";
+    render();
+    await chrome.tabs.reload(currentTab.id);
+  } catch (error) {
+    alert(`无法从 GitHub 刷新笔记。\n\n${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "从 GitHub 刷新";
+  }
+});
+
+document.getElementById("github-toggle").addEventListener("click", async () => {
+  const settings = document.getElementById("github-settings");
   settings.hidden = !settings.hidden;
-  if (!settings.hidden) await loadExportSettings();
+  if (!settings.hidden) await loadGithubSettings();
 });
 
-document.getElementById("save-directory").addEventListener("click", async () => {
-  const status = document.getElementById("directory-status");
+document.getElementById("toggle-github-token").addEventListener("click", (event) => {
+  const input = document.getElementById("github-token");
+  const visible = input.type === "text";
+  input.type = visible ? "password" : "text";
+  event.currentTarget.textContent = visible ? "显示" : "隐藏";
+  event.currentTarget.setAttribute("aria-pressed", String(!visible));
+});
+
+document.getElementById("copy-github-token").addEventListener("click", async (event) => {
+  const input = document.getElementById("github-token");
+  const token = input.value.trim();
+  if (!token) {
+    githubStatus("没有可复制的 Token。");
+    return;
+  }
   try {
-    const result = await exporterRequest("/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ directory: document.getElementById("export-directory").value })
-    });
-    document.getElementById("export-directory").value = result.directory;
-    status.textContent = "已保存自定义目录。";
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(token);
+    } else {
+      input.focus();
+      input.select();
+      if (!document.execCommand("copy")) throw new Error("浏览器拒绝访问剪贴板");
+    }
+    const button = event.currentTarget;
+    button.textContent = "已复制";
+    setTimeout(() => { button.textContent = "复制"; }, 1600);
   } catch (error) {
-    status.textContent = directoryError(error);
+    githubStatus(`无法复制 Token：${error.message}`);
   }
 });
 
-document.getElementById("choose-directory").addEventListener("click", async () => {
-  const status = document.getElementById("directory-status");
-  status.textContent = "正在打开系统文件夹选择器…";
+document.getElementById("save-github").addEventListener("click", async () => {
+  const status = document.getElementById("github-status");
+  const button = document.getElementById("save-github");
+  const settings = {
+    repository: document.getElementById("github-repository").value.trim(),
+    branch: document.getElementById("github-branch").value.trim(),
+    directory: document.getElementById("github-directory").value.trim(),
+    token: document.getElementById("github-token").value.trim()
+  };
+  if (!settings.token) {
+    status.textContent = "请填写 GitHub Token。";
+    return;
+  }
+  button.disabled = true;
+  status.textContent = "正在验证仓库、分支和 Token…";
   try {
-    const result = await exporterRequest("/choose-directory", { method: "POST" });
-    document.getElementById("export-directory").value = result.directory;
-    status.textContent = "已保存自定义目录。";
+    await githubNotesRequest("VERIFY_GITHUB_SETTINGS", { settings });
+    await chrome.storage.local.set({ [GITHUB_SETTINGS_KEY]: settings });
+    status.textContent = "验证通过并已保存。刷新网页后即可从 GitHub 恢复笔记。";
   } catch (error) {
-    status.textContent = directoryError(error);
+    status.textContent = `无法保存 GitHub 配置：${error.message}`;
+  } finally {
+    button.disabled = false;
   }
 });
 
-document.getElementById("clear").addEventListener("click", async () => {
-  if (!confirm("确定清除当前页面的所有标记和笔记吗？")) return;
-  await chrome.storage.local.remove(currentKey);
-  pageAnnotations = [];
+async function forceDeletePageNotes() {
+  const button = document.getElementById("confirm-force-delete");
+  const cancel = document.getElementById("cancel-force-delete");
+  button.disabled = true;
+  cancel.disabled = true;
+  button.textContent = "正在删除…";
+  try {
+    const result = await githubNotesRequest("DELETE_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: currentTab.title });
+    pageAnnotations = [];
+    render();
+    document.getElementById("force-delete-confirm").hidden = true;
+    await chrome.tabs.reload(currentTab.id);
+    alert(`已从 GitHub 删除 ${result.deletedCount || 0} 个笔记文件。`);
+  } catch (error) {
+    alert(`无法强制删除 GitHub 笔记。\n\n${error.message}`);
+  } finally {
+    button.disabled = false;
+    cancel.disabled = false;
+    button.textContent = "再次确认删除";
+  }
+}
+
+document.getElementById("force-delete").addEventListener("click", () => {
+  document.getElementById("force-delete-confirm").hidden = false;
+});
+
+document.getElementById("cancel-force-delete").addEventListener("click", () => {
+  document.getElementById("force-delete-confirm").hidden = true;
+});
+
+document.getElementById("confirm-force-delete").addEventListener("click", () => {
+  forceDeletePageNotes();
+});
+
+document.getElementById("filter").addEventListener("input", (event) => {
+  filterQuery = event.target.value;
   render();
-  chrome.tabs.reload(currentTab.id);
 });
 
 (async () => {
   [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  currentKey = `${STORAGE_PREFIX}${currentTab.url.split("#")[0]}`;
   document.getElementById("page-title").textContent = currentTab.title || currentTab.url;
-  const data = await chrome.storage.local.get(currentKey);
-  pageAnnotations = data[currentKey] || [];
+  try {
+    const notes = await githubNotesRequest("GET_GITHUB_NOTES", { pageUrl: pageUrl(), pageTitle: currentTab.title });
+    pageAnnotations = notes?.annotations || [];
+  } catch (error) {
+    loadError = `请先打开 GitHub 配置并保存 Token。${error.message}`;
+  }
   render();
 })();
